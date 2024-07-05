@@ -99,10 +99,12 @@ from .interfaces.interface_CFour import CFourTheory, run_CFour_HLC_correction, r
 from .interfaces.interface_xtb import xTBTheory
 from .interfaces.interface_PyMBE import PyMBETheory
 from .interfaces.interface_MLatom import MLatomTheory
+#add new interface for XEDA
+from .interfaces.interface_XEDA import XEDATheory
 
 # MM: external and internal
 from .interfaces.interface_OpenMM import OpenMMTheory, OpenMM_MD, OpenMM_MDclass, OpenMM_Opt, OpenMM_Modeller, \
-     OpenMM_box_equilibration, write_nonbonded_FF_for_ligand, solvate_small_molecule, small_molecule_parameterizer, \
+    OpenMM_box_equilibration, write_nonbonded_FF_for_ligand, solvate_small_molecule, small_molecule_parameterizer, \
         OpenMM_metadynamics, Gentle_warm_up_MD, check_gradient_for_bad_atoms, get_free_energy_from_biasfiles, \
         free_energy_from_bias_array,metadynamics_plot_data, merge_pdb_files
 
