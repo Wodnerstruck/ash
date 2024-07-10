@@ -2,7 +2,6 @@ import subprocess as sp
 import os
 import shutil
 import time
-import multiprocessing as mp
 import numpy as np
 import glob
 import copy
@@ -17,174 +16,240 @@ import ash.functions.functions_elstructure
 import ash.constants
 import ash.settings_ash
 import ash.functions.functions_parallel
-
 #XEDA Thoery class
 class XEDATheory:
-    def __init__(self, xedadir=None, filename='XEDA', label='XEDA', xedainput=None, method='hf', numcores=1):
-        self.theorynamelabel = 'XEDA'
-        self.label = label
-        self.theorytype = 'QM'
+    def __init__(self, numcores=1, printlevel=2, label='xeda', 
+                scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, filename = 'xeda',
+                scf_maxiter=128, eda=False, ct=False, blw=False):
         #self.analytic_gradient = False
         #self.analytic_hessian = False
-        print_line_with_mainheader(f"{self.theorynamelabel}Theory initialization")
-
-        if xedainput is not None:
-            print(f"{self.theorynamelabel}Theory requires a xedainput keyword")
+        self.theorynamelabel="XEDA"
+        self.theorytype="QM"
+        self.printlevel = printlevel
+        print_line_with_mainheader("XEDATheory initialization")
+        if scf_type is None:
+            print("Error: You must select an scf_type, e.g. 'RHF', 'UHF','ROHF', 'RKS', 'UKS', 'ROKS'")
             ashexit()
-        #Finding XEDA
-        if xedadir is None:
-            print(BC.WARNING, f"No xedadir argument passed to {self.theorynamelabel}Theory. Attempting to find xedadir variable inside settings_ash", BC.END)
-            try:
-                self.xedadir=ash.settings_ash.settings_dict["xedadir"]
-            except:
-                print(BC.WARNING,"Found no xedadir variable in settings_ash module either.",BC.END)
-                try:
-                    self.xedadir = os.path.dirname(shutil.which('xeda'))
-                    print(BC.OKGREEN,"Found xeda in PATH. Setting xeda to:", self.xedadir, BC.END)
-                except:
-                    print(BC.FAIL,"Found no xeda executable in PATH. Exiting... ", BC.END)
-                    ashexit()
+        if basis is None :
+            print("Error: You must provide basis or basis_file keyword . Basis set can a name (string)")
+            ashexit()
+        if functional is not None:
+            if self.printlevel >= 1:
+                print(f"Functional keyword: {functional} chosen. DFT is on!") 
+            if scf_type == 'RHF':
+                print("Changing RHF to RKS")
+                scf_type='RKS'
+            if scf_type == 'UHF':
+                print("Changing UHF to UKS")
+                scf_type='UKS'
         else:
-            self.xedaidr = xedadir
-
+            if scf_type == 'RKS' or scf_type == 'UKS':
+                print("Error: RKS/UKS chosen but no functional. Exiting")
+                ashexit()      
+        self.properties ={}
+        self.label = label
         self.filename=filename
-        self.xedainput=xedainput
-        self.method=method
+        
+        #SCF
+        self.scf_type=scf_type
+        self.basis = basis
+        self.functional = functional
+        self.basis_file = basis_file
+        self.scf_maxiter = scf_maxiter
+        self.ecp = ecp
+        #EDA
+        self.eda = eda
+        self.blw = blw
+        self.ct = ct
+        
+        self.numcores = numcores
+        #print the options
+        if self.printlevel >= 1:
+            print("SCF-type:", self.scf_type)
+            print("SCF Max Iter:", self.scf_maxiter)
+            print("Basis:", self.basis)
+            print("Basis-file:", self.basis_file)
+            print("Functional:", self.functional)
+            print("DM-EDA:", self.eda)
+            if self.ct == True:
+                print("Charge-transfer:", self.ct)
+            print("BLW-EDA:", self.blw)
+
+            
+        
+    def set_numcores(self,numcores):
         self.numcores=numcores
-
-    def set_numcores(self, numcores):
-        self.numcores=numcores
-
-    def cleanup(self):
-        print(f"{self.theorynamelabel} cleanup not yet implemented.")
-
-
-    #Run function
-    def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
-        elems=None, Grad=False, PC=False, numcores=None, restart=False, label=None,
-        charge=None, mult=None):
+        print("Setting numcores to: ", self.numcores)
+    #    #Controlling OpenMP parallelization.
+        import mole
+        mole.xscf_world.set_thread_num(numcores)
+    
+    def set_DFT_options(self):
+        import mole
+        if self.blw is not True:
+            if self.functional is not None:
+                self.hf = mole.hf_info(self.mol, dft=self.functional)
+            else:
+                self.hf = mole.hf_info(self.mol)
+        else:
+            if self.functional is not None:
+                self.blw_obj = mole.blw_info(self.mol, dft=self.functional)
+            else:
+                self.blw_obj = mole.blw_info(self.mol)
+        
+    def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None):
+        NotImplementedError("set_embedding_option not complete")
+            
+    
+    def create_mol(self, qm_elems, current_coords, charge, mult):
+        if self.printlevel >= 1:
+            print("Creating mol object")
+        import mole
+        self.mol = mole.mole()
+        coords_string=ash.modules.module_coords.create_coords_string_xeda(qm_elems,current_coords)
+        self.mol.build(coords_string, bas=self.basis)
+        self.mol.charge = charge
+        self.mol.mult = mult
+    
+    def run_SCF(self):
+        if self.printlevel >= 1:
+            print("\nrun_SCF")
         module_init_time=time.time()
-        if numcores == None:
-            numcores = self.numcores        
-        print(BC.OKBLUE, BC.BOLD, f"------------RUNNING {self.theorynamelabel} INTERFACE-------------", BC.END)
+        if self.scf_type == 'RHF' or self.scf_type == 'RKS':
+            self.hf.do_rhf()
+        elif self.scf_type == 'UHF' or self.scf_type == 'UKS':
+            self.hf.do_uhf() 
+        elif self.scf_type == 'ROHF' or self.scf_type == 'ROKS':
+            self.hf.do_rohf()
+        print_time_rel(module_init_time, modulename='XEDA run_SCF', moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
+        return self.hf.e_tol
+        
+    
+    def run_EDA(self):
+        if self.printlevel >= 1:
+            print("\nrun_DM-EDA")
+        module_init_time=time.time()
+        import mole
+        if self.functional is not None:
+            self.eda_obj = mole.eda_info(self.mol, self.functional)
+        else:
+            self.eda_obj = mole.eda_info(self.mol)
+            
+        self.eda_obj.do_eda(self.hf.e_tol, self.hf.d_matrix, if_ct=self.ct )
+        self.eda_obj.show()
+        print_time_rel(module_init_time, modulename='XEDA run_EDA', moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
+        if self.ct is not True:
+            return [self.eda_obj.ES, self.eda_obj.EX, self.eda_obj.REP, self.eda_obj.POL, self.eda_obj.TOL]
+        else:
+            return [self.eda_obj.ES, self.eda_obj.EX, self.eda_obj.REP, self.eda_obj.CT, self.eda_obj.POL, self.eda_obj.TOL]
+        
+    def run_BLW(self):
+        if self.printlevel >= 1:
+            print("\nrun_BLW")
+        module_init_time=time.time()
+        self.blw_obj.do_eda()
+        print_time_rel(module_init_time, modulename='XEDA run_BLW', moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
+        return [self.blw_obj.frz, self.blw_obj.ct, self.blw_obj.pol]
+            
+
+    def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
+            elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+            charge=None, mult=None):
+        self.prepare_run(current_coords=current_coords, elems=elems, charge=charge, mult=mult,
+                         current_MM_coords=current_MM_coords,
+                         MMcharges=MMcharges, qm_elems=qm_elems, Grad=Grad, PC=PC,
+                         numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label)
+        #Actual run
+        return self.actualrun(current_coords=current_coords, current_MM_coords=current_MM_coords, MMcharges=MMcharges, qm_elems=qm_elems,
+        elems=elems, Grad=Grad, PC=PC, numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label,
+        charge=charge, mult=mult)
+        
+        
+    def prepare_run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
+            elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+            charge=None, mult=None):
+        
+        module_init_time=time.time()
+        if self.printlevel >0:
+            print(BC.OKBLUE,BC.BOLD, "------------PREPARING XEDA INTERFACE-------------", BC.END)
+            print("Object-label:", self.label)
+            print("Run-label:", label)
+            
+            import mole
+            mole.xscf_world.set_thread_num(self.numcores)
+            
+            if self.printlevel >1:
+                print("Number of XEDA  threads is:", self.numcores)
+                
+                    #Checking if charge and mult has been provided
         if charge == None or mult == None:
-            print(BC.FAIL, f"Error. charge and mult has not been defined for {self.theorynamelabel}Theory.run method", BC.END)
+            print(BC.FAIL, "Error. charge and mult has not been defined for XEDATheory.run method", BC.END)
             ashexit()
-        print("Job label:", label)
-        print(f"Creating inputfile: {self.filename}.inp")
-        print(f"{self.theorynamelabel} input:")
-        print(self.xedainput)
-
-
         if current_coords is not None:
             pass
         else:
             print("no current_coords")
             ashexit()
-        #What elemlist to use. If qm_elems provided then QM/MM job, otherwise use elems list
+            
         if qm_elems is None:
             if elems is None:
                 print("No elems provided")
                 ashexit()
             else:
                 qm_elems = elems
-        #Write PC to disk
-        if PC is True:
-            print("pc true")
-            create_XEDA_pcfile_general(current_MM_coords,MMcharges, filename=self.filename)
-            pcfile=self.filename+'.dat'
-        else:
-            pcfile=None
-
-        #Write inputfile 
-        write_XEDA_input(self.xedainput,charge,mult,qm_elems,current_coords, method=self.method,
-                Grad=Grad, PCfile=pcfile, filename=self.filename)
+        #####################
+        #CREATE MOL OBJECT
+        #####################
+        self.create_mol(qm_elems, current_coords, charge, mult)
+        #####################
+        #DFT
+        #####################        
+        self.set_DFT_options()
         
-        #Run XEDA
-        run_XEDA(self.xedaidr, self.filename, numcores=numcores)
+        
+        if self.printlevel >1:
+            print_time_rel(module_init_time, modulename='XEDA prepare', moduleindex=2)
+        
+    def actualrun(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
+            elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+            charge=None, mult=None,pyscf=None ):
+        
+        module_init_time=time.time()
+        #############################################################
+        #RUNNING
+        #############################################################
 
-        #Grab energy
-        self.energy = grab_XEDA_energy(self.filename+'.out')
-        print(f"Single-point {self.theorynamelabel} energy:", self.energy)
-        print(BC.OKBLUE, BC.BOLD, f"------------ENDING {self.theorynamelabel} INTERFACE-------------", BC.END)
+        #####################
+        #SCF STEP
+        #####################
+        if self.eda is not True and self.blw is not True:
+            if self.printlevel >1:
+                print(f"Running SCF (SCF-type: {self.scf_type})")
+            self.energy = self.run_SCF()
+            if self.printlevel >=0:
+                print("Single-point XEDA energy:", self.energy)
+                print_time_rel(module_init_time, modulename='XEDA actualrun', moduleindex=2)
+            return self.energy   
+        elif self.eda is True:
+            if self.printlevel >1:
+                print(f"Running SCF (SCF-type: {self.scf_type})")
+            e_tol = self.run_SCF()
+            eda_results = self.run_EDA()
+            return eda_results
+        elif self.blw is True:
+            blw_results = self.run_BLW()
+            return blw_results
+            
+            
+        if self.printlevel >= 1:
+            print()
+            print(BC.OKBLUE, BC.BOLD, "------------ENDING XEDA INTERFACE-------------", BC.END)
+            
+                
 
-        if Grad is True:
-            self.gradient = grab_XEDA_gradient(self.filename+'.out', len(current_coords))
-            #Grab PC gradient
-            if PC is True:
-                self.pcgradient = grab_pcgradient_XEDA(self.filename+'.out', len(current_MM_coords))
-                print_time_rel(module_init_time, modulename=f'{self.theorynamelabel} run', moduleindex=2)
-                return self.energy, self.gradient, self.pcgradient
-            else:
-                print_time_rel(module_init_time, modulename=f'{self.theorynamelabel} run', moduleindex=2)
-                return self.energy, self.gradient
-        else:
-            print_time_rel(module_init_time, modulename=f'{self.theorynamelabel} run', moduleindex=2)
-            return self.energy
     
 
 
-################################
-# Independent XEDA functions
-################################
 
-def run_XEDA(xedadir, filename):
-    raise NotImplementedError('run XEDA is not implemented yet')
 
-def grab_XEDA_energy(filename):
-    grabline = '********'
 
-    with open(filename, 'r') as f:
-        for line in f:
-            if grabline in line:
-                energy = float(re.split(r'\s+', line)[-1]) 
-        return energy
-    raise NotImplementedError('grab XEDA energy is not implemented yet')
-def grab_XEDA_terms(filename):
-    energy_read = False
-    E_ele = 0.0
-    E_ex = 0.0
-    E_rep = 0.0
-    E_corr = 0.0
-    E_disp = 0.0
-    tot_E_disp = 0.0
-    E_tot = 0.0
-    with open(filename, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            if 'ALL BASIS SET' in line:
-                energy_read = True
-                continue
-            if energy_read and 'ELECTROSTATIC ENERGY' in line:
-                E_ele += float(line.strip().split()[-1])
-            if energy_read and 'EXCHANGE ENERGY' in line:
-                E_ex += float(line.strip().split()[-1])
-            if energy_read and 'REPULSION ENERGY' in line:
-                E_rep += float(line.strip().split()[-1])  
-            #if energy_read and 'GRIMME DISP CORRECTION' in line:
-                # E_disp += float(line.strip().split()[-1])
-            if energy_read and 'ELECTRON CORRELATION' in line:
-                E_corr += float(line.strip().split()[-1])
-            if energy_read and 'TOTAL INTERACTION ENERGY' in line:
-                E_tot += float(line.strip().split()[-1])
-            if energy_read and 'AB_DISP:' in line:
-                E_disp += float(line.strip().split()[-1])
-            if energy_read and 'TOT_DISP:' in line:
-                tot_E_disp += float(line.strip().split()[-1])
-            if energy_read and 'ele_AD' in line or 'ele_BC' in line or 'ele_CD' in line:
-                E_ele += float(line.strip().split()[-2])
-    return E_ele, E_ex, E_rep, E_corr, E_tot, tot_E_disp# kcal/mol
-    raise NotImplementedError('grab XEDA terms is not implemented yet')
-
-def grab_XEDA_gradient(filename, numatoms):
-    raise NotImplementedError('grab XEDA gradient is not implemented yet')
-
-def grab_pcgradient_XEDA(filename, numatoms):
-    raise NotImplementedError('grab pcgradient XEDA is not implemented yet')
-
-def write_XEDA_input(xedainput,charge,mult,elems,coords, filename='xeda',
-    PCfile=None, Grad=False, method='hf'):
-    raise NotImplementedError('write XEDAinput is not implemented yet')
-    
-def create_XEDA_pcfile_general(coords,pchargelist,filename='charge'):
-    raise NotImplementedError('create XEDAPCfile is not implemented yet')

@@ -1529,7 +1529,11 @@ def create_coords_string(elems, coords):
         coordsstring = coordsstring + el + '  ' + str(c[0]) + '  ' + str(c[1]) + '  ' + str(c[2]) + '\n'
     return coordsstring[:-1]
 
-
+def create_coords_string_xeda(elems, coords):
+    coordsstring = ''
+    for el, c in zip(elems, coords):
+        coordsstring = coordsstring + el + '  ' + str(c[0]) + '  ' + str(c[1]) + '  ' + str(c[2]) + ';\n'
+    return coordsstring[:-1]
 # Takes list of elements and gives formula
 def elemlisttoformula(list):
     # This dict comprehension was slow for large systems. Using set to reduce iterations
