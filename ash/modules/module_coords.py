@@ -1529,11 +1529,30 @@ def create_coords_string(elems, coords):
         coordsstring = coordsstring + el + '  ' + str(c[0]) + '  ' + str(c[1]) + '  ' + str(c[2]) + '\n'
     return coordsstring[:-1]
 
-def create_coords_string_xeda(elems, coords):
+def create_coords_string_xscf(elems, coords):
     coordsstring = ''
     for el, c in zip(elems, coords):
         coordsstring = coordsstring + el + '  ' + str(c[0]) + '  ' + str(c[1]) + '  ' + str(c[2]) + ';\n'
     return coordsstring[:-1]
+def create_coords_string_xeda(elems, coords, eda_atm, eda_charge, eda_mult):
+    if len(elems) != sum(eda_atm):
+        raise ValueError("The sum of numbers of atoms in segments and total number of atoms in the molecule should be equal.")
+    coordsstring = ''
+    start_idx = 0
+
+
+    for segment, charge, mult in zip(eda_atm, eda_charge, eda_mult):
+        coordsstring += f"{charge} {mult};\n"  
+
+        for el, c in zip(elems[start_idx:start_idx+segment], coords[start_idx:start_idx+segment]):
+            coordsstring += f"{el}  {c[0]}  {c[1]}  {c[2]};\n"
+
+        start_idx += segment
+        coordsstring += '---;\n'
+    print('EDA String:\n')
+    print(coordsstring.rstrip('---;\n'))
+    return coordsstring.rstrip('---;\n')
+    
 # Takes list of elements and gives formula
 def elemlisttoformula(list):
     # This dict comprehension was slow for large systems. Using set to reduce iterations

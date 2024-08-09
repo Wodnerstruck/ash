@@ -84,8 +84,28 @@ def Singlepoint(fragment=None, theory=None, Grad=False, charge=None, mult=None, 
         result = ASH_Results(label="Singlepoint", energy=energy, charge=charge, mult=mult)
         return result
 
-
-
+#Energy decomposition
+def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, printlevel=2):
+    '''Energy decomposition analysis function: runs a EDA calculation using ASH theory and ASH fragment.'''
+    if printlevel >= 1:
+        print_line_with_mainheader("Energy decomposition analysis function")
+    module_init_time=time.time()
+    if fragment is None or theory is None:
+        print(BC.FAIL,"Singlepoint requires a fragment and a theory object",BC.END)
+        ashexit()
+    coords=fragment.coords
+    elems=fragment.elems 
+       
+    charge,mult = check_charge_mult(charge, mult, theory.theorytype, fragment, "EDA", theory=theory)
+    if printlevel >= 1:
+        print()
+        print("Doing energy decomposition on fragment. Formula: {} Label: {} ".format(fragment.prettyformula,fragment.label))
+        print(f"Charge: {charge} Mult: {mult}")
+        
+    energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult)
+    result = ASH_Results(label="Energy decomposition", energy_contributions=energy, charge=charge, mult=mult)
+    return result
+    
 #Single-point energy function that runs calculations on 1 fragment using multiple theories. Returns a list of energies.
 #TODO: allow Grad option?
 def Singlepoint_theories(theories=None, fragment=None, charge=None, mult=None):

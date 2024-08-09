@@ -13,7 +13,7 @@ class ASH_Results:
     gradient: np.array = None
     reaction_energy: float = None
     #Energy contributions if e.g. ORCA_CC_CBS_Theory
-    energy_contributions: dict = None
+    energy_contributions: tuple = None
 
     #Multi-energy job: Lists of energies and gradients
     energies: list = None
@@ -23,6 +23,9 @@ class ASH_Results:
     gradients: list = None
     energies_dict: dict = None
     gradients_dict: dict = None
+    
+    #EDA components
+    eda_components: tuple = None
     #parallel Multi-energy job
     #Name of worker directories that could be accessed later
     worker_dirnames: dict = None
