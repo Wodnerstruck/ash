@@ -146,8 +146,8 @@ class XEDATheory:
         else:
             self.eda_obj = eda.eda_info(self.mol)
             
-        #self.eda_obj.do_eda(self.hf.tol_energy, self.hf.d_matrix)
-        self.eda_obj.do_eda_atomic(self.hf.d_matrix, None)
+        self.eda_obj.do_eda(self.hf.tol_energy, self.hf.d_matrix)
+        #self.eda_obj.do_eda_atomic(self.hf.d_matrix, None)
         self.eda_obj.show()
         print_time_rel(module_init_time, modulename='XEDA run_EDA', moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
         if self.ct is not True:
