@@ -72,16 +72,17 @@ class GeomeTRICOptimizerClass:
             if frozenatoms==None:
                 frozenatoms=[]
 
-            if ActiveRegion == True and coordsystem == "tric":
+            if ActiveRegion is True and coordsystem == "tric":
                 print("Warning: ActiveRegion True and coordsystem is TRIC.")
-                print("This requires translation")
+                print("HDLC coordinate system is usually more robust for large systems.")
+                print("Try coordsystem='hdlc' if you experience problems")
                 #TODO: Look into this more
-                #print("Activeregion true and coordsystem = tric are not compatible")
-                #print("Switching to HDLC")
-                #coordsystem='hdlc'
-                #exit()
+                # print("Activeregion true and coordsystem = tric are not compatible")
+                # print("Switching to HDLC")
+                # coordsystem='hdlc'
+                # exit()
 
-            #Defining some attributes
+            # Defining some attributes
             self.maxiter=maxiter
             self.actatoms=actatoms
             self.frozenatoms=frozenatoms
@@ -550,9 +551,9 @@ class GeomeTRICOptimizerClass:
             blankline()
 
             #Now returning final Results object
-            #TODO: Return dictionary of energy, gradient, coordinates etc, coordinates along trajectory ??
-            result = ASH_Results(label="Optimizer", energy=finalenergy, initial_geometry=None,
-                    geometry=fragment.coords)
+            #Note: could include the geometry in object but can be very large causing printing head-aches on screen, ignoring for now since the geometry is in the Fragment object anyway
+            result = ASH_Results(label="Optimizer", energy=finalenergy)
+            result.write_to_disk(filename="ASH_Optimizer.result")
             return result
 
 

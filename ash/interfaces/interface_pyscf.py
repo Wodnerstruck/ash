@@ -14,16 +14,17 @@ import copy
 
 #PySCF Theory object.
 #TODO: Somehow support reading in user mf object ?
+#Easier now than before. However, each run calls both prepare_run and actual_run
+#Can we skip prepare_run (creates mf etc.) and update coordinates only?
 #TODO: PE: Polarizable embedding (CPPE). Revisit
-#TODO: Support for creating mf object from FCIDUMP: https://pyscf.org/_modules/pyscf/tools/fcidump.html
 #TODO: Dirac HF/KS
 #TODO: Gradient for post-SCF methods and TDDFT
 
 class PySCFTheory:
-    def __init__(self, printsetting=False, printlevel=2, numcores=1, label="pyscf",
-                  scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, gridlevel=5, symmetry=False,
+    def __init__(self, printsetting=False, printlevel=2, numcores=1, label="pyscf", platform='CPU', GPU_pcgrad=False,
+                  scf_type=None, basis=None, basis_file=None, cartesian_basis=None, ecp=None, functional=None, gridlevel=5, symmetry='C1',
                   guess='minao', dm=None, moreadfile=None, write_chkfile_name='pyscf.chk',
-                  noautostart=False, autostart=True,
+                  noautostart=False, autostart=True, fcidumpfile=None,
                   soscf=False, damping=None, diis_method='DIIS', diis_start_cycle=0, level_shift=None,
                   fractional_occupation=False, scf_maxiter=50, scf_noiter=False, direct_scf=True, GHF_complex=False, collinear_option='mcol',
                   NMF=False, NMF_sigma=None, NMF_distribution='FD', stability_analysis=False,
@@ -31,7 +32,7 @@ class PySCFTheory:
                   TDDFT=False, tddft_numstates=10, NTO=False, NTO_states=None,
                   mom=False, mom_occindex=0, mom_virtindex=1, mom_spinmanifold=0,
                   dispersion=None, densityfit=False, auxbasis=None, sgx=False, magmom=None,
-                  pe=False, potfile='', filename='pyscf', memory=3100, conv_tol=1e-8, verbose_setting=4,
+                  pe=False, potfile=None, filename='pyscf', memory=3100, conv_tol=1e-8, verbose_setting=4,
                   CC=False, CCmethod=None, CC_direct=False, frozen_core_setting='Auto', cc_maxcycle=200, cc_diis_space=6,
                   CC_density=False, cc_conv_tol_normt=1e-06, cc_conv_tol=1e-07,
                   MP2=False,MP2_DF=False,MP2_density=False, DFMP2_density_relaxed=False,
@@ -45,7 +46,7 @@ class PySCFTheory:
 
         self.theorynamelabel="PySCF"
         self.theorytype="QM"
-        self.analytic_hessian=False
+        self.analytic_hessian=True
         self.printlevel=printlevel
         #if self.printlevel >= 2:
         print_line_with_mainheader("PySCFTheory initialization")
@@ -56,9 +57,13 @@ class PySCFTheory:
         if scf_type is None:
             print("Error: You must select an scf_type, e.g. 'RHF', 'UHF', 'GHF', 'RKS', 'UKS', 'GKS'")
             ashexit()
-        if basis is None and basis_file is None:
-            print("Error: You must provide basis or basis_file keyword . Basis set can a name (string) or dict (elements as keys)")
-            print("basis_file should be a string of the filename containing basis set in NWChem format")
+        if basis is None and basis_file is None and fcidumpfile is None:
+            print("Error: You must either provide a basis or a basis_file keyword . Basis can a name (string) or dict (elements as keys)")
+            print("basis_file should be a string of the filename containing basis set for each element, in NWChem format")
+            print("Best to download basis set from https://www.basissetexchange.org/")
+            ashexit()
+        if basis_file is not None and not os.path.isfile(basis_file):
+            print("Error: basis_file does not exist. Exiting")
             ashexit()
         if functional is not None:
             if self.printlevel >= 1:
@@ -114,18 +119,28 @@ class PySCFTheory:
         self.printsetting=printsetting
         self.verbose_setting=verbose_setting
 
+        # Counter for how often pyscftheory.run is called
+        self.runcalls = 0
+
         #CPPE Polarizable Embedding options
         self.pe=pe
         #Potfile from user or passed on via QM/MM Theory object ?
         self.potfile=potfile
 
         # SCF
+        self.platform=platform
+        self.GPU_pcgrad=GPU_pcgrad #Pointcharge gradient not on GPU by default
+        if self.platform == 'GPU':
+            print("Warning: GPU platform for PySCF. This requires gpu4pyscf plugin to be available")
+            self.GPU_pcgrad=True
+            print("Pointcharge gradient will also be performed on GPU using cupy")
         self.scf_type=scf_type
         self.stability_analysis=stability_analysis
         self.conv_tol=conv_tol
         self.direct_scf=direct_scf
         self.basis=basis #Basis set can be string or dict with elements as keys
         self.basis_file = basis_file
+        self.cartesian_basis=cartesian_basis
         self.magmom=magmom
         self.ecp=ecp
         self.functional=functional
@@ -154,6 +169,9 @@ class PySCFTheory:
         self.noautostart=noautostart
         if autostart is False:
             self.noautostart=True
+        #FCIDUMP file as read-in option
+        self.fcidumpfile=fcidumpfile
+
 
         #CAS
         self.CAS=CAS
@@ -357,9 +375,39 @@ class PySCFTheory:
             print("MC-PDFT:", self.mcpdft)
             print("mcpdft_functional:", self.mcpdft_functional)
 
+    def read_fcidump_file(self,fcidumpfile):
+        import pyscf.tools.fcidump
+        
+        #Read FCI dump and return dictionary with integrals etc
+        #result = pyscf.tools.fcidump.read(fcidumpfile, verbose=True)
+        #print("result:", result)
+        #H1, H2, ECORE, NORB, NELEC, MS, ORBSYM, ISYM
+
+        self.mf = pyscf.tools.fcidump.to_scf(fcidumpfile, molpro_orbsym=False)
+
+    # Create FCIDUMP file from either mf object (provided or internal)
+    def create_fcidump_file(self, mf=None, dump_from_mos=False, mo_coeff=None, 
+                            filename="FCIDUMP", tol=1e-15):
+        import pyscf.tools.fcidump
+
+        # Dump from MOs if selected (can be any MO-coefficients)
+        if dump_from_mos is True:
+            print("Creating FCIDUMP from MOs")
+            pyscf.tools.fcidump.from_mo(self.mol,filename, mo_coeff, tol=tol)
+        else:
+            print("Creating FCIDUMP from mf object")
+            # Otherwise mf object
+            if mf is None:
+                print("No mf object provided. Using internal mf (self.mf)")
+                mf=self.mf
+
+            pyscf.tools.fcidump.from_scf(mf, filename, tol=tol)
+
+            print("Created FCIDUMP file:", filename)
+
     def determine_frozen_core(self,elems):
         print("Determining frozen core")
-        #Main elements
+        # Main elements
         FC_elems={'H':0,'He':0,'Li':0,'Be':0,'B':2,'C':2,'N':2,'O':2,'F':2,'Ne':2,
         'Na':2,'Mg':2,'Al':10,'Si':10,'P':10,'S':10,'Cl':10,'Ar':10,
         'K':10,'Ca':10,'Sc':10,'Ti':10,'V':10,'Cr':10,'Mn':10,'Fe':10,'Co':10,'Ni':10,'Cu':10,'Zn':10,
@@ -614,17 +662,22 @@ class PySCFTheory:
         if type(ccsd) == pyscf.cc.uccsd.UCCSD:
             print("CCSD(T) lambda UHF")
             #NOTE: No threading parallelization seen here, not sure why
-            conv, l1, l2 = uccsd_t_lambda.kernel(ccsd, eris, ccsd.t1, ccsd.t2)
+            conv, l1, l2 = uccsd_t_lambda.kernel(ccsd, eris, ccsd.t1, ccsd.t2, max_cycle=self.cc_maxcycle)
             rdm1 = uccsd_t_rdm.make_rdm1(ccsd, ccsd.t1, ccsd.t2, l1, l2, eris=eris, ao_repr=True)
             Dm = rdm1[0]+rdm1[1]
         else:
             print("CCSD(T) lambda RHF")
-            conv, l1, l2 = ccsd_t_lambda.kernel(ccsd, eris, ccsd.t1, ccsd.t2)
+            conv, l1, l2 = ccsd_t_lambda.kernel(ccsd, eris, ccsd.t1, ccsd.t2, max_cycle=self.cc_maxcycle)
             rdm1 = ccsd_t_rdm.make_rdm1(ccsd, ccsd.t1, ccsd.t2, l1, l2, eris=eris, ao_repr=True)
             if np.ndim(rdm1) == 3:
                 Dm = rdm1[0]+rdm1[1]
             elif np.ndim(rdm1) == 2:
                 Dm = rdm1
+        if conv is False:
+            print("Error: CCSD(T) lambda equations failed to converge! Be very careful with the results")
+            ashexit()
+        else:
+            print("CC lambda equations converged!")
         # Diagonalize the DM in AO basis
         S = mf.get_ovlp()
         A = reduce(np.dot, (S, Dm, S))
@@ -685,6 +738,19 @@ class PySCFTheory:
     def run_population_analysis(self, mf, unrestricted=False, dm=None, type='Mulliken', label=None, verbose=3):
         import pyscf
         print()
+        print("Running population analysis")
+
+        #TODO: gpu4pyscf errors for Mulliken pop analysis. Probably fixed later
+        #For now, we return
+        if self.platform == 'GPU':
+            print("GPU4PySCF does not support Mulliken population analysis right now. Returning")
+            #import gpu4pyscf
+            #mull_pop_func = gpu4pyscf.dft.RKS.mulliken_pop
+            return
+        else:
+            mull_pop_func = pyscf.scf.rhf.mulliken_pop
+            mull_spinpop_func = pyscf.scf.uhf.mulliken_spin_pop
+
         if label==None:
             label=''
         if type == 'Mulliken':
@@ -693,17 +759,17 @@ class PySCFTheory:
                     dm = mf.make_rdm1()
                 #print("dm:", dm)
                 #print("dm.shape:", dm.shape)
-                mulliken_pop =pyscf.scf.rhf.mulliken_pop(self.mol,dm, verbose=verbose)
-                print(f"{label} Mulliken charges:", mulliken_pop[1])
+                mulliken_populations =mull_pop_func(self.mol,dm, verbose=verbose)
+                print(f"{label} Mulliken charges:", mulliken_populations[1])
             elif unrestricted is True:
                 if dm is None:
                     dm = mf.make_rdm1()
                 #print("dm:", dm)
                 #print("dm.shape:", dm.shape)
-                mulliken_pop =pyscf.scf.rhf.mulliken_pop(self.mol,dm, verbose=verbose)
-                mulliken_spinpop = pyscf.scf.uhf.mulliken_spin_pop(self.mol,dm, verbose=verbose)
-                print(f"{label} Mulliken charges:", mulliken_pop[1])
-                print(f"{label} Mulliken spin pops:", mulliken_spinpop[1])
+                mulliken_populations =mull_pop_func(self.mol,dm, verbose=verbose)
+                mulliken_spinpopulations = mull_spinpop_func(self.mol,dm, verbose=verbose)
+                print(f"{label} Mulliken charges:", mulliken_populations[1])
+                print(f"{label} Mulliken spin pops:", mulliken_spinpopulations[1])
         return
 
     def run_stability_analysis(self):
@@ -784,33 +850,75 @@ class PySCFTheory:
                 return False
             try:
                 self.chkfileobject = pyscf.scf.chkfile.load(chkfile, 'scf')
-                #TODO: Check if orbitals read are correct
-                if len(self.chkfileobject["mo_occ"]) == 2:
-                    if self.printlevel >= 1:
-                        print("Reading unrestricted orbitals from checkpointfile")
-                    #unrestricted
-                    sum_occ = sum(self.chkfileobject["mo_occ"][0]) + sum(self.chkfileobject["mo_occ"][1])
-                else:
-                    if self.printlevel >= 1:
-                        print("Reading restricted orbitals from checkpointfile")
-                    #restricted
-                    try:
-                        sum_occ = sum(self.chkfileobject.mo_occ)
-                        if self.num_electrons != sum_occ:
-                            if self.printlevel >= 1:
-                                print(f"Number of electrons in checkpointfile ({sum_occ}) does not match number of electrons in molecule ({self.num_electrons})")
-                                print("Ignoring MOs in chkfile and continuing")
-                            return False
-                    except AttributeError:
-                        if self.printlevel >= 1:
-                            print("No occupations found in chkfile. Continuing")
-
-                return True
             except TypeError:
                 if self.printlevel >= 1:
-                    print("No SCF orbitals found. Could be checkpointfile from CASSCF?")
+                    print("No SCF orbitals found in chkfile. Could be checkpointfile from CASSCF?")
                     print("Ignoring and continuing")
                 return False
+            #Check information in chkfile
+            #Check if unrestricted or restricted information
+            if len(self.chkfileobject["mo_occ"]) == 2:
+                print("Chkfile mo occ length is 2 => Unrestricted")
+                chkfile_scftype="UHF"
+            elif 2.0 in self.chkfileobject["mo_occ"]:
+                chkfile_scftype="RHF"
+            #Checking if mismatch between chkfile info and chosen scf-type
+            #TODO: In principle we could convert RKS-info from chkfile to UKS-info and vice versa
+            if chkfile_scftype == "UHF":
+                if self.scf_type == "RHF" or self.scf_type == "RKS":
+                    print("Warning: Mismatch between SCF-type in chkfile and PySCFTheory object. Ignoring chkfile")
+                    return False
+            if chkfile_scftype == "RHF":
+                if self.scf_type == "UHF" or self.scf_type == "UKS":
+                    print("Warning: Mismatch between SCF-type in chkfile and PySCFTheory object. Ignoring chkfile")
+                    return False 
+            
+            if chkfile_scftype == "UHF":
+                #UNRESTRICTED
+                if self.printlevel >= 1:
+                    print("Reading unrestricted orbitals from checkpointfile")
+                #unrestricted
+                try:
+                    sum_occ = int(sum(self.chkfileobject["mo_occ"][0]) + sum(self.chkfileobject["mo_occ"][1]))
+                    num_occ = len(self.chkfileobject["mo_occ"][0])
+                except AttributeError:
+                    if self.printlevel >= 1:
+                        print("No occupations found in chkfile. Continuing")
+                    return False
+                if num_occ != self.num_basis_functions:
+                    print(f"Number of occupations ({num_occ}) in chkfile does not match number of basis functions ({self.num_basis_functions})")
+                    print("Ignoring MOs in chkfile and continuing")
+                    return False
+                print("self.num_electrons:", self.num_electrons)
+                print("int(sum_occ):", int(sum_occ))
+                if self.num_electrons != int(sum_occ):
+                    if self.printlevel >= 1:
+                        print(f"Number of electrons in checkpointfile ({sum_occ}) does not match number of electrons in molecule ({self.num_electrons})")
+                        print("Ignoring MOs in chkfile and continuing")
+                    return False
+            else:
+                #RESTRICTED
+                if self.printlevel >= 1:
+                    print("Reading restricted orbitals from checkpointfile")
+                
+                num_occ = len(self.chkfileobject["mo_occ"])
+                try:
+                    sum_occ = int(sum(self.chkfileobject["mo_occ"]))
+                except AttributeError:
+                    if self.printlevel >= 1:
+                        print("No occupations found in chkfile. Continuing")
+                    return False
+                if num_occ != self.num_basis_functions:
+                    print(f"Number of occupations ({num_occ}) in chkfile does not match number of basis functions ({self.num_basis_functions})")
+                    print("Ignoring MOs in chkfile and continuing")
+                    return False
+                if self.num_electrons != int(sum_occ):
+                    if self.printlevel >= 1:
+                        print(f"Number of electrons in checkpointfile ({sum_occ}) does not match number of electrons in molecule ({self.num_electrons})")
+                        print("Ignoring MOs in chkfile and continuing")
+                    return False
+            return True
+
 
     def setup_guess(self):
         if self.printlevel >= 1:
@@ -837,7 +945,7 @@ class PySCFTheory:
                     print("DM shape:", self.dm[0].shape) #DM is a tuple for unrestricted
                 if self.dm[0].shape[0] != self.num_basis_functions:
                     if self.dm[0].shape[0]*2 != self.num_basis_functions:
-                        print(f"Warning: The density matrix shape {self.dm.shape} does not match number of basis functions ({self.num_basis_functions}).")
+                        print(f"Warning: The density matrix shape {self.dm[0].shape[0]} does not match number of basis functions ({self.num_basis_functions}).")
                         print("This density matrix can not be correct. Ignoring")
                         self.dm=None
                     return None
@@ -940,6 +1048,12 @@ class PySCFTheory:
             self.loscmf=loscmf
             self.write_orbitals_to_Moldenfile(self.mol, self.loscmf.mo_coeff, self.loscmf.mo_occ, self.loscmf.mo_energy, label="LOSC-SCF-orbs")
 
+    def run_hessian(self):
+        print("Running meanfield Hessian")
+        import pyscf.hessian
+        self.hessian_obj = self.mf.Hessian()
+        hessian = self.hessian_obj.kernel()
+        return hessian
 
     def run_MP2(self,frozen_orbital_indices=None, MP2_DF=None):
         print("\nInside run_MP2")
@@ -1638,28 +1752,34 @@ class PySCFTheory:
         if self.CCmethod == 'CCSD':
             rdm1 = ccobject.make_rdm1(ao_repr=True)
             natocc, natorb = pyscf.mcscf.addons.make_natural_orbitals(ccobject)
+            print("Mulliken analysis for CCSD density matrix")
+            self.run_population_analysis(mf, unrestricted=unrestricted, dm=rdm1, type='Mulliken', label='CCSD')
             self.get_dipole_moment(dm=rdm1, label="CCSD")
+            molden_name=f"pySCF_CCSD_natorbs"
         elif self.CCmethod == 'BCCD':
             rdm1 = ccobject.make_rdm1(ao_repr=True)
             natocc, natorb = pyscf.mcscf.addons.make_natural_orbitals(ccobject)
             #Dipole moment
             self.get_dipole_moment(dm=rdm1, label="BCCD")
+            molden_name=f"pySCF_BCCD_natorbs"
         elif self.CCmethod == 'CCSD(T)':
             natocc,natorb,rdm1 = self.calculate_CCSD_T_natorbs(ccobject,mf)
             print("Mulliken analysis for CCSD(T) density matrix")
             self.run_population_analysis(mf, unrestricted=unrestricted, dm=rdm1, type='Mulliken', label='CCSD(T)')
             dipole = self.get_dipole_moment(dm=rdm1, label="CCSD(T)")
+            molden_name=f"pySCF_CCSD_T_natorbs"
         elif self.CCmethod == 'BCCD(T)':
             print("Warning: Density for BCCD(T) has not been tested")
             natocc,natorb,rdm1 = self.calculate_CCSD_T_natorbs(ccobject,mf)
             print("Mulliken analysis for BCCD(T) density matrix")
             self.run_population_analysis(mf, unrestricted=unrestricted, dm=rdm1, type='Mulliken', label='BCCD(T)')
             dipole = self.get_dipole_moment(dm=rdm1, label="BCCD(T)")
+            molden_name=f"pySCF_BCCD_T_natorbs"
 
 
         #Preserving new DM
         print("Coupled cluster density matrix stored as dm attribute of PySCFTheory object")
-        print("rdm1:", rdm1)
+        #print("rdm1:", rdm1)
         #print("rdm1[0] shape", rdm1[0].shape)
         self.dm = rdm1
 
@@ -1672,7 +1792,6 @@ class PySCFTheory:
         ash.functions.functions_elstructure.poly_rad_index_nu_nl(natocc)
         ash.functions.functions_elstructure.poly_rad_index_n_d(natocc)
         print()
-        molden_name=f"pySCF_{self.CCmethod}_natorbs"
         print(f"Writing {self.CCmethod} natural orbitals to Moldenfile: {molden_name}.molden")
         self.write_orbitals_to_Moldenfile(self.mol, natorb, natocc,  label=molden_name)
 
@@ -1681,7 +1800,12 @@ class PySCFTheory:
     #Method to grab dipole moment from pyscftheory object  (assumes run has been executed)
     def get_dipole_moment(self, dm=None, label=None):
         if self.printlevel >=1:
-            print("get_dipole_moment function:")
+            print("get_dipole_moment function.")
+
+        if self.platform =="GPU":
+            print("Dipole moment calculation not currently supported on GPU")
+            return None
+
         if label == None:
             label=""
         if dm is None:
@@ -1689,6 +1813,8 @@ class PySCFTheory:
                 print("No DM provided. Using mean-field object dm")
             #MF dipole moment
             dipole = self.mf.dip_moment(unit='A.U.',verbose=self.printlevel)
+            if self.printlevel >=1:
+                print(f"MF Dipole moment ({label}): {dipole} A.U.")
         else:
             if self.printlevel >=1:
                 print("Using provided DM")
@@ -1711,7 +1837,7 @@ class PySCFTheory:
 
 
     #Create mol object (self.mol) via method
-    def create_mol(self, qm_elems, current_coords, charge, mult):
+    def create_mol(self, qm_elems, current_coords, charge, mult, cartesian_basis=None):
         if self.printlevel >= 1:
             print("Creating mol object")
         import pyscf
@@ -1728,31 +1854,42 @@ class PySCFTheory:
         self.mol.charge = charge
         self.mol.spin = mult-1
 
+        #cartesian basis or not
+        if cartesian_basis is not None:
+            print("Setting cartesian basis flag to:", cartesian_basis)
+            self.mol.cart = cartesian_basis
+    #Update mol object with coordinates or charge/mult
+    #def update_mol(self, qm_elems, current_coords, charge, mult):
+    #    coords_string=ash.modules.module_coords.create_coords_string(qm_elems,current_coords)
+    #    self.mol.atom = coords_string
+    #    self.mol.charge = charge
+    #    self.mol.spin = mult-1
 
     #Define basis in mol object
-    def define_basis(self,basis_string_from_file=None):
+    def define_basis(self,elems=None):
         if self.printlevel >= 1:
             print("Defining basis set in mol object")
         import pyscf
         #PYSCF basis object: https://sunqm.github.io/pyscf/tutorial.html
-        #Object can be string ('def2-SVP') or a dict with element-specific keys and values
-        #NOTE: Basis-file parsing not quite ready.
-        #NOTE: Need to read file containing also basis for that element I think
         #NOTE: We should also support basis set exchange API: https://github.com/pyscf/pyscf/issues/1299
         if self.basis_file != None:
-            print("basis_file option is not ready")
-            ashexit()
-            #with open(self.basis_file) as b:
-            #    basis_string_from_file=' '.join(b.readlines())
-            #print("basis_string_from_file:", basis_string_from_file)
-            self.mol.basis= pyscf.gto.basis.parse(basis_string_from_file)
-            #https://github.com/nmardirossian/PySCF_Tutorial/blob/master/dev_guide.ipynb
-            #self.mol.basis = #{'H': gto.basis.read('basis/STO-2G.dat')
+            if self.printlevel >= 1:
+                print("Reading basis set from file:", self.basis_file)
+            basis_dict={}
+            for elem in elems:
+                if self.printlevel >= 1:
+                    print(f"Reading basis set for element: {elem} from file: {self.basis_file}")
+                basis_per_elem=pyscf.gto.basis.load(self.basis_file, elem)
+                if self.printlevel >= 3:
+                    print("basis_per_elem:", basis_per_elem)
+                basis_dict[elem]=basis_per_elem
+            self.mol.basis=basis_dict
         else:
+            if self.printlevel >= 1:
+                print("Using basis set from input string")
             self.mol.basis=self.basis
         if self.printlevel >= 1:
             print("Basis set:", self.mol.basis)
-
         #Optional setting magnetic moments
         if self.magmom != None:
             if self.printlevel >= 1:
@@ -1762,11 +1899,6 @@ class PySCFTheory:
         self.mol.ecp = self.ecp
         #Memory settings
         self.mol.max_memory = self.memory
-        #BUILD mol object
-        self.mol.build()
-        self.num_basis_functions=len(self.mol.ao_labels())
-        if self.printlevel >= 1:
-            print("Number of basis functions:", self.num_basis_functions)
         ###########
 
     #Create mf object (self.mf) via method
@@ -1792,6 +1924,33 @@ class PySCFTheory:
             self.mf = pyscf.scf.GHF(self.mol)
         elif self.scf_type == 'GKS':
             self.mf = pyscf.scf.GKS(self.mol)
+
+    #Probably depreceated. Created mf for GPU.
+    def create_mf_for_gpu(self):
+        if self.printlevel >= 1:
+            print("Creating pySCF mf object using gpu4pyscf")
+
+        try:
+            import gpu4pyscf
+        except ModuleNotFoundError:
+            print("gpu4pyscf library not found. Make sure it is installed. See: https://github.com/pyscf/gpu4pyscf")
+            ashexit()
+
+        if self.scf_type == 'RKS':
+            from gpu4pyscf.dft import rks
+            self.mf = rks.RKS(self.mol)
+        elif self.scf_type == 'UKS':
+            from gpu4pyscf.dft import uks
+            self.mf = uks.UKS(self.mol)
+        elif self.scf_type == 'RHF':
+            from gpu4pyscf.scf import RHF
+            self.mf = RHF(self.mol)
+        elif self.scf_type == 'UHF':
+            from gpu4pyscf.scf import UHF
+            self.mf = UHF(self.mol)
+        else:
+            print("SCF-type not available for gpu4pyscf")
+            ashexit()
 
     def set_mf_scfconv_options(self):
         if self.printlevel >= 1:
@@ -1825,18 +1984,33 @@ class PySCFTheory:
             if self.printlevel >1:
                 print(f"Levelshift value: {self.level_shift}")
             self.mf.level_shift = self.level_shift
-        #DIIS option
-        if self.diis_method == 'CDIIS' or self.diis_method == 'DIIS':
-            self.mf.DIIS = pyscf.scf.DIIS
-        elif self.diis_method == 'ADIIS':
-            self.mf.DIIS = pyscf.scf.ADIIS
-        elif self.diis_method == 'EDIIS':
-            self.mf.DIIS = pyscf.scf.EDIIS
+        #DIIS
+        self.set_diis()
+
         #SOSCF/Newton
         if self.soscf is True:
             if self.printlevel >1:
                 print("SOSCF is True. Turning on in meanfield object")
             self.mf = self.mf.newton()
+
+    def set_diis(self):
+        if self.platform == 'CPU':
+            import pyscf
+            #DIIS option
+            if self.diis_method == 'CDIIS' or self.diis_method == 'DIIS':
+                self.mf.DIIS = pyscf.scf.DIIS
+            elif self.diis_method == 'ADIIS':
+                self.mf.DIIS = pyscf.scf.ADIIS
+            elif self.diis_method == 'EDIIS':
+                self.mf.DIIS = pyscf.scf.EDIIS
+        else:
+            import gpu4pyscf
+            #DIIS option
+            if self.diis_method == 'CDIIS' or self.diis_method == 'DIIS':
+                self.mf.DIIS = gpu4pyscf.scf.diis.DIIS
+            else:
+                print("For GPU platform, ADIIS, EDIIS or others are not supported")
+                ashexit()
 
     def set_mf_smearing(self):
         import pyscf.scf.addons
@@ -1975,7 +2149,7 @@ class PySCFTheory:
             self.determine_frozen_core(elems)
         elif self.frozen_core_setting == None or self.frozen_core_setting == 'None':
             print("Warning: No core-orbitals will be frozen in the CC/MP2 calculation.")
-            self.frozen_core_orbital_indices=None
+            self.frozen_core_orbital_indices=[]
         else:
             print("Manual user frozen core:", self.frozen_core_setting)
             self.frozen_core_orbital_indices=self.frozen_core_setting
@@ -1989,15 +2163,27 @@ class PySCFTheory:
         return self.frozen_orbital_indices
 
     def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None):
+        import pyscf
         #QM/MM electrostatic embedding
         if PC is True:
             import pyscf.qmmm
             # QM/MM pointcharge embedding
+            #TODO: Gaussian blur option
             print("PC True. Adding pointcharges")
-            self.mf = pyscf.qmmm.mm_charge(self.mf, MM_coords, MMcharges)
+            #self.mf = pyscf.qmmm.mm_charge(self.mf, MM_coords, MMcharges)
+
+            #Newer syntax
+            mm_mol = pyscf.qmmm.mm_mole.create_mm_mol(MM_coords, MMcharges)
+
+            #Modified pyscf QM/MM routines
+            import ash.interfaces.interface_pyXscf_mods
+            print("self.platform:", self.platform)
+            self.mf = ash.interfaces.interface_pyXscf_mods.qmmm_for_scf(self.mf, mm_mol, platform=self.platform)
+            print("Here self.mf:", self.mf)
 
         #Polarizable embedding option
-        if self.pe is True:
+        elif self.pe is True:
+            import pyscf.solvent
             print(BC.OKGREEN, "Polarizable Embedding Option On! Using CPPE module inside PySCF", BC.END)
             print(BC.WARNING, "Potfile: ", self.potfile, BC.END)
             try:
@@ -2068,6 +2254,8 @@ class PySCFTheory:
 
     #Independent method to run SCF using previously defined mf object and possible input dm
     def run_SCF(self,mf=None, dm=None, max_cycle=None):
+        import pyscf
+        import pyscf.dft
         if self.printlevel >= 1:
             print("\nInside run_SCF")
         module_init_time=time.time()
@@ -2091,6 +2279,7 @@ class PySCFTheory:
         if self.printlevel >=1:
             print("Max cycle in mf object:", mf.max_cycle)
             print("Running SCF")
+        print("mf:", mf)
         scf_result = mf.run(dm)
         E_tot = scf_result.e_tot
         if self.printlevel >=1:
@@ -2104,10 +2293,11 @@ class PySCFTheory:
                 print("E_xc:", E_xc)
 
         #Setting number of orbitals as attribute of object
-        if len(self.mf.mo_occ) == 2:
-            self.num_orbs = len(self.mf.mo_occ[0]) # Unrestricted
-        else:
+        if isinstance(self.mf, pyscf.scf.hf.RHF) or isinstance(self.mf, pyscf.dft.rks.RKS) :
             self.num_orbs = len(self.mf.mo_occ) # Restricted
+        else:
+            self.num_orbs = len(self.mf.mo_occ[0]) 
+            
         if self.printlevel >= 1:
             print("Number of orbitals:", self.num_orbs)
 
@@ -2123,18 +2313,22 @@ class PySCFTheory:
     #General run function to distinguish  possible specialrun (disabled) and mainrun
     def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
             elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
-            charge=None, mult=None):
+            charge=None, mult=None, Hessian=False):
 
+        self.runcalls += 1
+        #Note: We have to do prepare_run each time. Mol object (with coords,basis etc.) has to be created and built.
+        #Mf object then has to be built from that mol object.
         #Prepare for run (create mol object, mf object, modify mf object etc.)
         #Does not execute SCF, CC or anything
         self.prepare_run(current_coords=current_coords, elems=elems, charge=charge, mult=mult,
-                         current_MM_coords=current_MM_coords,
-                         MMcharges=MMcharges, qm_elems=qm_elems, Grad=Grad, PC=PC,
-                         numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label)
+                            current_MM_coords=current_MM_coords,
+                            MMcharges=MMcharges, qm_elems=qm_elems, Grad=Grad, PC=PC,
+                            numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label)
+
         #Actual run
         return self.actualrun(current_coords=current_coords, current_MM_coords=current_MM_coords, MMcharges=MMcharges, qm_elems=qm_elems,
         elems=elems, Grad=Grad, PC=PC, numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label,
-        charge=charge, mult=mult)
+        charge=charge, mult=mult, Hessian=Hessian)
 
     def prepare_run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
             elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
@@ -2203,23 +2397,36 @@ class PySCFTheory:
         #####################
         #CREATE MOL OBJECT
         #####################
-        self.create_mol(qm_elems, current_coords, charge, mult)
+        self.create_mol(qm_elems, current_coords, charge, mult, cartesian_basis=self.cartesian_basis)
 
         #####################
         # BASIS
         #####################
-
-        #TODO: basis_string_from_file option
-        self.define_basis(basis_string_from_file=None)
+        if self.fcidumpfile is None:
+            self.define_basis(elems=qm_elems)
+        self.mol.build()
+        self.num_basis_functions=len(self.mol.ao_labels())
+        if self.printlevel >= 1:
+            print("Number of basis functions:", self.num_basis_functions)
 
         ############################
         # CREATE MF OBJECT
         ############################
-        self.create_mf() #Creates self.mf
+        #if self.platform == 'GPU':
+        #    print("Platform is GPU")
+        #    self.create_mf_for_gpu() #Creates self.mf
+        #else:
+        if self.fcidumpfile is None:
+            self.create_mf() #Creates self.mf
+        else:
+            print("FCIDUMP file read-in")
+            print("Creating mf object from FCIDUMPfile")
+            self.read_fcidump_file(self.fcidumpfile)
 
         #GHF/GKS
         if self.scf_type == 'GHF' or self.scf_type == 'GKS':
             self.set_collinear_option()
+
 
         #####################
         # RELATIVITY
@@ -2272,12 +2479,20 @@ class PySCFTheory:
         if self.printlevel >1:
             print_time_rel(module_init_time, modulename='pySCF prepare', moduleindex=2)
 
+        #############################
+        # PLATFORM CHANGE
+        #############################
+        #Testing to convert mf object to GPU before QM/MM
+        if self.platform == 'GPU':
+            print("GPU platform requested. Will now convert mf object to GPU")
+            self.mf = self.mf.to_gpu()
+
 
     #Actual Run
     #Assumes prepare_run has been executed
     def actualrun(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
             elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
-            charge=None, mult=None,pyscf=None ):
+            charge=None, mult=None,pyscf=None, Hessian=False ):
 
         module_init_time=time.time()
         #############################################################
@@ -2364,8 +2579,12 @@ class PySCFTheory:
                 print(f"UHF/UKS spinmult: {spinmult}\n")
             if self.printlevel >=1:
                 print("SCF Dipole moment:")
-            self.get_dipole_moment()
-
+            try:
+                self.get_dipole_moment()
+            except ValueError as e:
+                print("Problem getting dipole moment from meanfield object")
+                print("Error message:", e)
+                print("Continuing.")
             #Dispersion correction
             if self.dispersion != None:
                 if self.dispersion == "D3" or self.dispersion == "D4":
@@ -2464,7 +2683,7 @@ class PySCFTheory:
         ##############
         #GRADIENT
         ##############
-        if Grad==True:
+        if Grad:
             if self.printlevel >1:
                 print("Gradient requested")
 
@@ -2505,11 +2724,41 @@ class PySCFTheory:
                 print_time_rel(checkpoint, modulename='pySCF make_rdm1 for PC', moduleindex=2)
                 current_MM_coords_bohr = current_MM_coords*ash.constants.ang2bohr
                 checkpoint=time.time()
-                self.pcgrad = pyscf_pointcharge_gradient(self.mol,current_MM_coords_bohr,MMcharges,dm)
+                self.pcgrad = pyscf_pointcharge_gradient(self.mol,np.array(current_MM_coords_bohr),np.array(MMcharges),dm, GPU=self.GPU_pcgrad)
                 print_time_rel(checkpoint, modulename='pyscf_pointcharge_gradient', moduleindex=2)
 
             if self.printlevel >1:
                 print("Gradient calculation done")
+
+        ##############
+        #HESSIAN
+        ##############
+        if Hessian:
+            hessinfo = self.run_hessian()
+            print("hessinfo:", hessinfo)
+            hessian = hessinfo.transpose(0,2,1,3).reshape(3*3,3*3)
+            self.hessian=hessian
+            try:
+                print("Attempting IR intensity calculation (requires pyscf.prop library)")
+                
+                from pyscf.prop.infrared.rhf import Infrared, kernel_dipderiv
+                
+            except ModuleNotFoundError:
+                print("pyscf IR intensity requires installation of pyscf.prop module")
+                print("See: https://github.com/pyscf/properties")
+                print("You can install with: pip install git+https://github.com/pyscf/properties")
+                ashexit()
+
+            mf_ir = Infrared(self.mf)
+            mf_ir.mf_hess=self.hessian_obj
+            mf_ir.run()
+            #Could run dipole derivatives directly also
+            #dipderiv = kernel_dipderiv(mf_ir)
+            #print("dipderiv:", dipderiv)
+            #mf_ir.summary()
+            #mf_ir.ir_inten
+            print("mf_ir.ir_inten:", mf_ir.ir_inten)
+            self.ir_intensities=mf_ir.ir_inten
 
         if self.printlevel >= 1:
             print()
@@ -2531,28 +2780,61 @@ class PySCFTheory:
 
 #Based on https://github.com/pyscf/pyscf/blob/master/examples/qmmm/30-force_on_mm_particles.py
 #Uses pyscf mol and MM coords and charges and provided density matrix to get pointcharge gradient
-def pyscf_pointcharge_gradient(mol,mm_coords,mm_charges,dm):
+def pyscf_pointcharge_gradient(mol,mm_coords,mm_charges,dm, GPU=False):
+    time0=time.time()
+    #Making sure density matrix is as it should
     if dm.shape[0] == 2:
-        dmf = dm[0] + dm[1] #unrestricted
+        dmf = np.array(dm[0] + dm[1]) #unrestricted
     else:
-        dmf=dm
+        dmf=np.array(dm)
+
+#GPU
+    if GPU is True:
+        import cupy
+        einsumfunc = cupy.einsum
+        linalg_norm_func=cupy.linalg.norm
+
+        mm_coords_used=cupy.asarray(mm_coords)
+        mm_charges_used=cupy.asarray(mm_charges)
+        qm_coords = cupy.asarray(mol.atom_coords())
+        qm_charges = cupy.asarray(mol.atom_charges())
+        dmf=cupy.asarray(dmf)
+        array_mod=cupy.asarray
+#CPU
+    else:
+        def dummy(f): return f
+        array_mod=dummy
+        einsumfunc=np.einsum
+        linalg_norm_func=np.linalg.norm
+        mm_coords_used=mm_coords
+        mm_charges_used=mm_charges
+        qm_coords = mol.atom_coords()
+        qm_charges = mol.atom_charges()
+
+    print("Einsumfunc from:", einsumfunc.__module__)
+    print("Time for setup 1:", time.time()-time0)
     # The interaction between QM atoms and MM particles
     # \sum_K d/dR (1/|r_K-R|) = \sum_K (r_K-R)/|r_K-R|^3
-    qm_coords = mol.atom_coords()
-    qm_charges = mol.atom_charges()
-    dr = qm_coords[:,None,:] - mm_coords
-    r = np.linalg.norm(dr, axis=2)
-    g = np.einsum('r,R,rRx,rR->Rx', qm_charges, mm_charges, dr, r**-3)
+    dr = qm_coords[:,None,:] - mm_coords_used
+    r = linalg_norm_func(dr, axis=2)
+    g = einsumfunc('r,R,rRx,rR->Rx', qm_charges, mm_charges_used, dr, r**-3)
+    print("Time for setup 2:", time.time()-time0)
     # The interaction between electron density and MM particles
     # d/dR <i| (1/|r-R|) |j> = <i| d/dR (1/|r-R|) |j> = <i| -d/dr (1/|r-R|) |j>
     #   = <d/dr i| (1/|r-R|) |j> + <i| (1/|r-R|) |d/dr j>
-    for i, q in enumerate(mm_charges):
+
+    for i, q in enumerate(mm_charges_used):
         with mol.with_rinv_origin(mm_coords[i]):
-            v = mol.intor('int1e_iprinv')
-        f =(np.einsum('ij,xji->x', dmf, v) +
-            np.einsum('ij,xij->x', dmf, v.conj())) * -q
+            v = array_mod(mol.intor('int1e_iprinv'))
+        f =(einsumfunc('ij,xji->x', dmf, v) +
+            einsumfunc('ij,xij->x', dmf, v.conj())) * -q
         g[i] += f
-    return g
+    print("Time for setup 4:", time.time()-time0)
+    #Converting from Cupy to numpy
+    if GPU is True:
+        return cupy.asnumpy(g)
+    else:
+        return g
 
 
 #Function to do multireference correction via pyscf-based theories: Dice or Block.
@@ -2725,6 +3007,7 @@ def pyscf_CCSD_T_natorb_selection(fragment=None, pyscftheoryobject=None, numcore
                                                             CCmethod='CCSD(T)', mo_coefficients=final_orbs)
 
     result = ASH_Results(label="pyscf_CCSD_T_natorb_selection", energy=CC_energy, charge=fragment.charge, mult=fragment.mult)
+    result.write_to_disk(filename="ASH_pyscf.result")
     return result
 
 #Standalone function for reading either pySCF-CHK file or Molden file and returning MO coefficients and occupations
@@ -2747,6 +3030,28 @@ def pySCF_read_MOs(moreadfile,pyscfobject):
         print("Is basis different? Exiting")
         ashexit()
     return mo_coefficients, occupations
+
+def pySCF_write_Moldenfile(pyscfobject=None, label="orbs"):
+    print("pySCF_write_Moldenfile function\n")
+    import pyscf
+    from pyscf.tools import molden
+
+    #Early exits
+    if pyscfobject is None:
+        print("Error: pyscfobject must be provided")
+        ashexit()
+
+    mo_coefficients = pyscfobject.mf.mo_coeff
+    occupations = pyscfobject.mf.mo_occ
+    mo_energies = pyscfobject.mf.mo_energy
+
+    print("Writing orbitals to disk as Molden file")
+    molden.from_mo(pyscfobject.mol, f'pyscf_{label}.molden', mo_coefficients, occ=occupations)
+    with open(f'{label}.molden', 'w') as f1:
+        molden.header(pyscfobject.mol, f1)
+        molden.orbital_coeff(pyscfobject.mol, f1, mo_coefficients, ene=mo_energies, occ=occupations)
+    return
+
 
 #Standalone density-potential inversion functions
 def KS_inversion_n2v(pyscftheoryobj, dm, method='PDECO', numcores=1, opt_max_iter=200,

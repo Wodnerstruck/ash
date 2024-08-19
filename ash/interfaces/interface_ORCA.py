@@ -8,23 +8,24 @@ import glob
 import copy
 
 import ash.modules.module_coords
-from ash.functions.functions_general import ashexit,insert_line_into_file,BC,print_time_rel, print_line_with_mainheader, pygrep2, pygrep, search_list_of_lists_for_index,print_if_level
+from ash.functions.functions_general import ashexit,insert_line_into_file,BC,print_time_rel, print_line_with_mainheader, pygrep2, \
+    pygrep, search_list_of_lists_for_index,print_if_level, writestringtofile, check_program_location
 from ash.modules.module_singlepoint import Singlepoint
 from ash.modules.module_coords import check_charge_mult
-#from ash.functions.functions_elstructure import xdm_run, calc_cm5
 import ash.functions.functions_elstructure
 import ash.constants
 import ash.settings_ash
 import ash.functions.functions_parallel
 
 
-#ORCA Theory object.
+# ORCA Theory object.
 class ORCATheory:
-    def __init__(self, orcadir=None, orcasimpleinput='', printlevel=2, basis_per_element=None, extrabasisatoms=None, extrabasis=None, TDDFT=False, TDDFTroots=5, FollowRoot=1,
+    def __init__(self, orcadir=None, orcasimpleinput='', printlevel=2, basis_per_element=None, extrabasisatoms=None, extrabasis=None, atom_specific_basis_dict=None, ecp_dict=None, TDDFT=False, TDDFTroots=5, FollowRoot=1,
                  orcablocks='', extraline='', first_iteration_input=None, brokensym=None, HSmult=None, atomstoflip=None, numcores=1, nprocs=None, label="ORCA",
                  moreadfile=None, moreadfile_always=False, bind_to_core_option=True, ignore_ORCA_error=False,
                  autostart=True, propertyblock=None, save_output_with_label=False, keep_each_run_output=False, print_population_analysis=False, filename="orca", check_for_errors=True, check_for_warnings=True,
-                 fragment_indices=None, xdm=False, xdm_a1=None, xdm_a2=None, xdm_func=None, NMF=False, NMF_sigma=None):
+                 fragment_indices=None, xdm=False, xdm_a1=None, xdm_a2=None, xdm_func=None, NMF=False, NMF_sigma=None,
+                 cpcm_radii=None, ROHF_UHF_swap=False):
         print_line_with_mainheader("ORCATheory initialization")
 
 
@@ -32,106 +33,105 @@ class ORCATheory:
         self.theorytype="QM"
         self.analytic_hessian=True
 
-        #Making sure we have a working ORCA location
+        # Making sure we have a working ORCA location
         print("Checking for ORCA location")
-        self.orcadir = check_ORCA_location(orcadir)
-        #Making sure ORCA binary works (and is not orca the screenreader)
+        self.orcadir = check_ORCA_location(orcadir, modulename="ORCATheory")
+        # Making sure ORCA binary works (and is not orca the screenreader)
         check_ORCAbinary(self.orcadir)
-        #Checking OpenMPI
+        # Checking OpenMPI
         if numcores != 1:
             print(f"ORCA parallel job requested with numcores: {numcores} . Make sure that the correct OpenMPI version (for the ORCA version) is available in your environment")
             ash.functions.functions_parallel.check_OpenMPI()
 
-        #Bind to core option when calling ORCA: i.e. execute: /path/to/orca file.inp "--bind-to none"
-        #TODO: Default False; make True?
+        # Bind to core option when calling ORCA: i.e. execute: /path/to/orca file.inp "--bind-to none"
+        # TODO: Default False; make True?
         self.bind_to_core_option=bind_to_core_option
         print("bind_to_core_option:", self.bind_to_core_option)
 
-        #Checking if user added Opt, Freq keywords
+        # Checking if user added Opt, Freq keywords
         if ' OPT' in orcasimpleinput.upper() or ' FREQ' in orcasimpleinput.upper() :
             print(BC.FAIL,"Error. orcasimpleinput variable can not contain ORCA job-directives like: Opt, Freq, Numfreq", BC.END)
             print("String:", orcasimpleinput.upper())
             print("orcasimpleinput should only contain information on electronic-structure method (e.g. functional), basis set, grid, SCF convergence etc.")
             ashexit()
 
-        #Whether to check ORCA outputfile for errors and warnings or not
-        #Generally recommended. Could be disabled to speed up I/O a tiny bit
+        # Whether to check ORCA outputfile for errors and warnings or not
+        # Generally recommended. Could be disabled to speed up I/O a tiny bit
         self.check_for_errors=check_for_errors
         self.check_for_warnings=check_for_warnings
 
-        #Counter for how often ORCATheory.run is called
+        # Counter for how often ORCATheory.run is called
         self.runcalls=0
 
-        #Whether to keep the ORCA outputfile for each run as orca_runX.out
+        # Whether to keep the ORCA outputfile for each run as orca_runX.out
         self.keep_each_run_output=keep_each_run_output
-        #Whether to save ORCA outputfile with given label
+        # Whether to save ORCA outputfile with given label
         if save_output_with_label is True and label is None:
             print("Error: save_output_with_label option requires a label keyword also")
             ashexit()
         else:
             self.save_output_with_label=save_output_with_label
 
-        #Print population_analysis in each run
+        # Print population_analysis in each run
         self.print_population_analysis=print_population_analysis
 
-        #Label to distinguish different ORCA objects
+        # Label to distinguish different ORCA objects
         self.label=label
 
-        #Create inputfile with generic name
+        # Create inputfile with generic name
         self.filename=filename
 
-        #Whether to exit ORCA if subprocess command faile
+        # Whether to exit ORCA if subprocess command faile
         self.ignore_ORCA_error=ignore_ORCA_error
 
 
-        #MOREAD-file
+        # MOREAD-file
         self.moreadfile=moreadfile
         self.moreadfile_always=moreadfile_always
-        #Autostart
+        # Autostart
         self.autostart=autostart
         # Each ORCA calculation will save path to last GBW-file used in case we have switched directories
-        #and we want to use last one
+        # and we want to use last one
         self.path_to_last_gbwfile_used=None #default None
 
-        #Printlevel
+        # Printlevel
         self.printlevel=printlevel
 
-        #TDDFT
+        # TDDFT
         self.TDDFT=TDDFT
         self.TDDFTroots=TDDFTroots
         self.FollowRoot=FollowRoot
 
-        #Setting numcores of object
-        #NOTE: nprocs is deprecated but kept on for a bit
+        # Setting numcores of object
+        # NOTE: nprocs is deprecated but kept on for a bit
         if nprocs is None:
             self.numcores=numcores
         else:
             self.numcores=nprocs
 
-        #Property block. Added after coordinates unless None
+        # Property block. Added after coordinates unless None
         self.propertyblock=propertyblock
 
-        #Store optional properties of ORCA run job in a dict
+        # Store optional properties of ORCA run job in a dict
         self.properties ={}
 
-
-        #Adding NoAutostart keyword to extraline if requested
+        # Adding NoAutostart keyword to extraline if requested
         if self.autostart is False:
             self.extraline=extraline+"\n! Noautostart"
         else:
             self.extraline=extraline
 
-        #Inputfile definitions
+        # Inputfile definitions
         self.orcasimpleinput=orcasimpleinput
         self.orcablocks=orcablocks
 
-        #Input-lines only for first run call
+        # Input-lines only for first run call
         if first_iteration_input is not None:
             self.first_iteration_input = first_iteration_input
         else:
             self.first_iteration_input=""
 
-        #BROKEN SYM OPTIONS
+        # BROKEN SYM OPTIONS
         self.brokensym=brokensym
         self.HSmult=HSmult
         if isinstance(atomstoflip, int):
@@ -141,19 +141,24 @@ class ORCATheory:
             self.atomstoflip=atomstoflip
         else:
             self.atomstoflip=[]
-        #Basis sets per element
+        # Basis sets per element
         self.basis_per_element=basis_per_element
         if self.basis_per_element is not None:
             print("Basis set dictionary for each element provided:", basis_per_element)
-        #Extrabasis
+
+        # Extrabasis: add specific basis set keyword to certain atoms
         if extrabasisatoms is not None:
             self.extrabasisatoms=extrabasisatoms
             self.extrabasis=extrabasis
         else:
             self.extrabasisatoms=[]
             self.extrabasis=""
+        # Atom-specific basis set options
+        # Within ORCA inputfile, define a basis set for each and every atom. Requires a dictionary with element as key and basis set as value
+        self.atom_specific_basis_dict=atom_specific_basis_dict
+        self.ecp_dict=ecp_dict #ECP dict that usually goes with atom_specific dict
 
-        #Used in the case of counterpoise calculations
+        # Used in the case of counterpoise calculations
         self.ghostatoms = [] #Adds ":" in front of element in coordinate block. Have basis functions and grid points
         self.dummyatoms = [] #Adds DA instead of element. No real atom
 
@@ -161,13 +166,13 @@ class ORCATheory:
         self.fragment_indices = fragment_indices
 
         # self.qmatoms need to be set for Flipspin to work for QM/MM job.
-        #Overwritten by QMMMtheory, used in Flip-spin
+        # Overwritten by QMMMtheory, used in Flip-spin
         self.qmatoms=[]
 
-        #Whether to keep a copy of last output (filename_last.out) or not
+        # Whether to keep a copy of last output (filename_last.out) or not
         self.keep_last_output=True
 
-        #NMF
+        # NMF
         self.NMF=NMF
         if self.NMF is True:
             if NMF_sigma is None:
@@ -195,6 +200,21 @@ nroots {self.TDDFTroots}
 IRoot {self.FollowRoot}
 end
 """
+        #ROHF-UHF swap
+        self.ROHF_UHF_swap=ROHF_UHF_swap
+
+        #Specific CPCM radii. e.g. to use DRACO radii
+        if cpcm_radii is not None:
+            print("CPCM radii provided:", cpcm_radii)
+            #if len(cpcm_radii) != len(c:
+            #    print("Error: Number of radii provided does not match number of elements in molecule")
+            #    ashexit()
+            cpcm_block="%cpcm\n"
+            for i,radius in enumerate(cpcm_radii):
+                cpcm_block= cpcm_block+ f"AtomRadii({i},  {radius})\n"
+            cpcm_block=cpcm_block+"end\n"
+            print("cpcm_block:", cpcm_block)
+            self.orcablocks=self.orcablocks+cpcm_block
 
         #XDM: if True then we add !AIM to input
         self.xdm=False
@@ -243,15 +263,13 @@ end
         except FileNotFoundError:
             pass
 
-    #Do an ORCA-optimization instead of ASH optimization. Useful for gas-phase chemistry when ORCA-optimizer is better than geomeTRIC
+    # Do an ORCA-optimization instead of ASH optimization. Useful for gas-phase chemistry when ORCA-optimizer is better than geomeTRIC
     def Opt(self, fragment=None, Grad=None, Hessian=None, numcores=None, charge=None, mult=None):
 
         module_init_time=time.time()
         print(BC.OKBLUE,BC.BOLD, "------------RUNNING INTERNAL ORCA OPTIMIZATION-------------", BC.END)
-        #Coords provided to run or else taken from initialization.
-        #if len(current_coords) != 0:
-
-
+        # Coords provided to run or else taken from initialization.
+        # if len(current_coords) != 0:
 
         if fragment == None:
             print("No fragment provided to Opt.")
@@ -268,8 +286,6 @@ end
         if charge == None or mult == None:
             print(BC.FAIL, "Error. charge and mult has not been defined for ORCATheory.Opt method", BC.END)
             ashexit()
-
-
 
         if numcores==None:
             numcores=self.numcores
@@ -288,7 +304,7 @@ end
             print(self.propertyblock)
         print("Charge: {}  Mult: {}".format(charge, mult))
 
-        #TODO: Make more general
+        # TODO: Make more general
         create_orca_input_plain(self.filename, elems, current_coords, self.orcasimpleinput,self.orcablocks,
                                 charge, mult, extraline=self.extraline, HSmult=self.HSmult, moreadfile=self.moreadfile)
         print(BC.OKGREEN, f"ORCA Calculation started using {numcores} CPU cores", BC.END)
@@ -326,13 +342,15 @@ end
         ash.modules.module_coords.print_internal_coordinate_table(fragment)
         print_time_rel(module_init_time, modulename='ORCA Opt-run', moduleindex=2)
         return
-    #Method to grab dipole moment from an ORCA outputfile (assumes run has been executed)
+    # Method to grab dipole moment from an ORCA outputfile (assumes run has been executed)
     def get_dipole_moment(self):
-        return grab_dipole_moment(self.filename+'.out')
+        dm = grab_dipole_moment(self.filename+'.out')
+        print("Dipole moment:", dm)
+        return dm
     def get_polarizability_tensor(self):
         polarizability,diag_pz = grab_polarizability_tensor(self.filename+'.out')
         return polarizability
-    #Run function. Takes coords, elems etc. arguments and computes E or E+G.
+    # Run function. Takes coords, elems etc. arguments and computes E or E+G.
     def run(self, current_coords=None, charge=None, mult=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
             elems=None, Grad=False, Hessian=False, PC=False, numcores=None, label=None):
         module_init_time=time.time()
@@ -390,7 +408,7 @@ end
         if numcores==None:
             numcores=self.numcores
 
-        #Basis set definition per element from input dict
+        # Basis set definition per element from input dict
         if self.basis_per_element != None:
             basisstring=""
             for el,b in self.basis_per_element.items():
@@ -399,12 +417,27 @@ end
 %basis
 {basisstring}
 end"""
-            self.orcablocks = self.orcablocks + basisblock
+
+            if basisblock not in self.orcablocks:
+                self.orcablocks = self.orcablocks + basisblock
+
+        # If ECP-dict provided (often goes with atom_specific_basis_dict)
+        if self.ecp_dict != None:
+            bstring=""
+            for el,b in self.ecp_dict.items():
+                for x in b:
+                    bstring += f"{x}"
+            ecpbasisblock=f"""
+%basis
+{bstring}
+end"""
+            if ecpbasisblock not in self.orcablocks:
+                self.orcablocks = self.orcablocks + ecpbasisblock
 
         if self.printlevel >= 2:
             print("Running ORCA with {} cores available".format(numcores))
 
-        #MOREAD. Checking file provided exists and determining what to do if not
+        # MOREAD. Checking file provided exists and determining what to do if not
         if self.moreadfile != None:
             print_if_level(f"Moreadfile option active. File path: {self.moreadfile}", self.printlevel,2)
             if os.path.isfile(self.moreadfile) is True:
@@ -424,7 +457,7 @@ end"""
             if os.path.isfile(f"{self.filename}.gbw") is False:
                 print_if_level(f"No {self.filename}.gbw file is present in dir.", self.printlevel,2)
                 if self.path_to_last_gbwfile_used != None:
-                    print_if_level("Found a path to last GBW-file used by this Theory object. Will try to copy this file do current dir", self.printlevel,2)
+                    print_if_level(f"Found a path ({self.path_to_last_gbwfile_used}) to last GBW-file used by this Theory object. Will try to copy this file do current dir", self.printlevel,2)
                     try:
                         shutil.copy(self.path_to_last_gbwfile_used, f"./{self.filename}.gbw")
                     except FileNotFoundError:
@@ -487,7 +520,8 @@ end"""
         if self.fragment_indices:
             if self.printlevel >= 2:
                 print("List of fragment indices defined:", fragment_indices)
-        if PC==True:
+
+        if PC is True:
             if self.printlevel >= 2:
                 print("Pointcharge embedding is on!")
             create_orca_pcfile(self.filename, current_MM_coords, MMcharges)
@@ -495,28 +529,28 @@ end"""
                 create_orca_input_pc(self.filename, qm_elems, current_coords, self.orcasimpleinput, self.orcablocks,
                                         charge, mult, extraline=extraline, HSmult=self.HSmult, Grad=Grad, Hessian=Hessian, moreadfile=self.moreadfile,
                                      atomstoflip=qmatomstoflip, extrabasisatoms=qmatoms_extrabasis, extrabasis=self.extrabasis, propertyblock=self.propertyblock,
-                                     fragment_indices=fragment_indices)
+                                     fragment_indices=fragment_indices, atom_specific_basis_dict=self.atom_specific_basis_dict, ROHF_UHF_swap=self.ROHF_UHF_swap)
             else:
                 create_orca_input_pc(self.filename, qm_elems, current_coords, self.orcasimpleinput, self.orcablocks,
                                         charge, mult, extraline=extraline, Grad=Grad, Hessian=Hessian, moreadfile=self.moreadfile,
                                         extrabasisatoms=qmatoms_extrabasis, extrabasis=self.extrabasis, propertyblock=self.propertyblock,
-                                        fragment_indices=fragment_indices)
+                                        fragment_indices=fragment_indices, atom_specific_basis_dict=self.atom_specific_basis_dict, ROHF_UHF_swap=self.ROHF_UHF_swap)
         else:
             if self.brokensym == True:
                 create_orca_input_plain(self.filename, qm_elems, current_coords, self.orcasimpleinput,self.orcablocks,
                                         charge,mult, extraline=extraline, HSmult=self.HSmult, Grad=Grad, Hessian=Hessian, moreadfile=self.moreadfile,
                                      atomstoflip=qmatomstoflip, extrabasisatoms=qmatoms_extrabasis, extrabasis=self.extrabasis, propertyblock=self.propertyblock,
-                                     ghostatoms=self.ghostatoms, dummyatoms=self.dummyatoms,
-                                     fragment_indices=fragment_indices)
+                                     ghostatoms=self.ghostatoms, dummyatoms=self.dummyatoms, ROHF_UHF_swap=self.ROHF_UHF_swap,
+                                     fragment_indices=fragment_indices, atom_specific_basis_dict=self.atom_specific_basis_dict)
             else:
                 create_orca_input_plain(self.filename, qm_elems, current_coords, self.orcasimpleinput,self.orcablocks,
                                         charge,mult, extraline=extraline, Grad=Grad, Hessian=Hessian, moreadfile=self.moreadfile,
                                         extrabasisatoms=qmatoms_extrabasis, extrabasis=self.extrabasis, propertyblock=self.propertyblock,
-                                        ghostatoms=self.ghostatoms, dummyatoms=self.dummyatoms,
-                                        fragment_indices=fragment_indices)
+                                        ghostatoms=self.ghostatoms, dummyatoms=self.dummyatoms,ROHF_UHF_swap=self.ROHF_UHF_swap,
+                                        fragment_indices=fragment_indices, atom_specific_basis_dict=self.atom_specific_basis_dict)
 
-        #Run inputfile using ORCA parallelization. Take numcores argument.
-        #print(BC.OKGREEN, "------------Running ORCA calculation-------------", BC.END)
+        # Run inputfile using ORCA parallelization. Take numcores argument.
+        # print(BC.OKGREEN, "------------Running ORCA calculation-------------", BC.END)
         if self.printlevel >= 2:
             print(BC.OKGREEN, "ORCA Calculation starting.", BC.END)
 
@@ -541,7 +575,17 @@ end"""
 
             if self.printlevel >= 1:
                 print(f"ORCA converged in {numiterations} iterations")
+        else:
+            print("There was an ORCA error that was ignored by user-input")
 
+        if self.ROHF_UHF_swap:
+            print("\nROHF UHF swap feature active.")
+            print("This means that a $new_job ORCA job was run with a ROHF-UHF noiter switch")
+            print(f"Note that the relevant GBW file is then: {self.filename}_job2.gbw\n")
+            print("Stored as self.gbwfile of this ORCATheory object")
+            self.gbwfile=self.filename+'_job2.gbw'
+        else:
+            self.gbwfile=self.filename+'.gbw'
 
         #Now that we have possibly run a BS-DFT calculation, turning Brokensym off for future calcs (opt, restart, etc.)
         # using this theory object
@@ -594,7 +638,13 @@ end"""
             self.energy=ORCAfinalenergygrab(outfile)
             if self.printlevel >= 1:
                 print("ORCA energy:", self.energy)
+        else:
+            self.energy=ORCAfinalenergygrab(outfile)
 
+            if self.energy is None:
+                print("No energy could be found in ORCA outputfile.")
+                print("Setting energy to 0.0 and returning")
+                return 0.0
         #NMF
         if self.NMF is True:
             print("NMF option is active.")
@@ -654,6 +704,8 @@ end"""
             print("Reading Hessian from file:", self.filename+".hess")
             self.hessian = Hessgrab(self.filename+".hess")
 
+            self.ir_intensities = grab_IR_intensities(self.filename+'.hess')
+
         if Grad == True:
             grad =ORCAgradientgrab(engradfile)
             self.grad = self.grad + grad
@@ -691,12 +743,12 @@ end"""
 #CHECKS FOR ORCA program
 ###############################################
 
-def check_ORCA_location(orcadir):
+def check_ORCA_location(orcadir, modulename="ORCATheory"):
     if orcadir != None:
         finalorcadir = orcadir
         print(BC.OKGREEN,f"Using orcadir path provided: {finalorcadir}", BC.END)
     else:
-        print(BC.WARNING, "No orcadir argument passed to ORCATheory. Attempting to find orcadir variable in ASH settings file (~/ash_user_settings.ini)", BC.END)
+        print(BC.WARNING, f"No orcadir argument passed to {modulename}. Attempting to find orcadir variable in ASH settings file (~/ash_user_settings.ini)", BC.END)
         try:
             finalorcadir=ash.settings_ash.settings_dict["orcadir"]
             print(BC.OKGREEN,"Using orcadir path provided from ASH settings file (~/ash_user_settings.ini): ", finalorcadir, BC.END)
@@ -812,7 +864,7 @@ def grab_ORCA_warnings(filename):
     #TODO: Write pygrep version that supports list of search-strings
     warning_strings=['WARNING', 'warning', 'Warning']
     for warnstring in warning_strings:
-        warn_l = pygrep2(warnstring, filename)
+        warn_l = pygrep2(warnstring, filename, errors="ignore")
         warning_lines+=warn_l
 
     warnings=[]
@@ -834,7 +886,7 @@ def grab_ORCA_errors(filename):
     #TODO: Write pygrep version that supports list of search-strings
     error_strings=['error', 'Error', 'ERROR', 'aborting']
     for errstring in error_strings:
-        error_l = pygrep2(errstring, filename)
+        error_l = pygrep2(errstring, filename, errors="ignore")
         for e in error_l:
             if e not in error_lines:
                 error_lines.append(e)
@@ -855,7 +907,7 @@ def grab_ORCA_errors(filename):
 #Todo: Use reverse-read instead to speed up?
 def checkORCAfinished(file):
     iter=None
-    with open(file) as f:
+    with open(file, errors="ignore") as f:
         for line in f:
             if 'SCF CONVERGED AFTER' in line:
                 iter=line.split()[-3]
@@ -864,7 +916,7 @@ def checkORCAfinished(file):
     return False,None
 def checkORCAOptfinished(file):
     converged=False
-    with open(file) as f:
+    with open(file, errors="ignore") as f:
         for line in f:
             if 'THE OPTIMIZATION HAS CONVERGED' in line:
                 converged=True
@@ -877,7 +929,7 @@ def checkORCAOptfinished(file):
 #Grab Final single point energy. Ignoring possible encoding errors in file
 def ORCAfinalenergygrab(file, errors='ignore'):
     Energy=None
-    with open(file) as f:
+    with open(file, errors=errors) as f:
         for line in f:
             if 'FINAL SINGLE POINT ENERGY' in line:
                 if "Wavefunction not fully converged!" in line:
@@ -888,11 +940,11 @@ def ORCAfinalenergygrab(file, errors='ignore'):
                     #Changing: sometimes ORCA adds info to the right of energy
                     #Energy=float(line.split()[-1])
                     Energy=float(line.split()[4])
-    if Energy == None:
+    if Energy is None:
         print(BC.FAIL,"ASH found no energy in file:", file, BC.END)
         print(BC.FAIL,"Something went wrong with ORCA run. Check ORCA outputfile:", file, BC.END)
         print(BC.OKBLUE,BC.BOLD, "------------ENDING ORCA-INTERFACE-------------", BC.END)
-        ashexit()
+        return None
     return Energy
 
 
@@ -900,7 +952,7 @@ def ORCAfinalenergygrab(file, errors='ignore'):
 def ORCAtimingsgrab(file):
     timings={} #in seconds
     try:
-        with open(file) as f:
+        with open(file, errors="ignore") as f:
             for line in f:
                 if 'Calculating one electron integrals' in line:
                     one_elec_integrals=float(line.split()[-2].replace("(",""))
@@ -1173,6 +1225,20 @@ def tddft_orbitalpairs_grab(file):
                 if 'the weight of the individual excitations' in line:
                     tddftgrab=True
     return states_dict
+
+def grab_IR_intensities(filename):
+    grab=False
+    intensities=[]
+    with open(filename) as f:
+        for line in f:
+            print(line)
+            if grab:
+                if len(line.split()) == 6:
+                    intens = float(line.split()[2])
+                    intensities.append(intens)
+            if '$ir_spectrum' in line:
+                grab=True
+    return intensities
 
 #Grab energies from unrelaxed scan in ORCA (paras block type)
 def grabtrajenergies(filename):
@@ -1668,8 +1734,8 @@ def create_orca_inputVIEcomp_gas(name, name2, elems, coords, orcasimpleinput, or
 #Create PC-embedded ORCA inputfile from elems,coords, input, charge, mult,pointcharges
 #Allows for extraline that could be another '!' line or block-inputline.
 def create_orca_input_pc(name,elems,coords,orcasimpleinput,orcablockinput,charge,mult, Grad=False, extraline='',
-                         HSmult=None, atomstoflip=None, Hessian=False, extrabasisatoms=None, extrabasis=None,
-                         moreadfile=None, propertyblock=None, fragment_indices=None):
+                         HSmult=None, atomstoflip=None, Hessian=False, extrabasisatoms=None, extrabasis=None, atom_specific_basis_dict=None, extraspecialbasisatoms=None, extraspecialbasis=None,
+                         moreadfile=None, propertyblock=None, fragment_indices=None, ROHF_UHF_swap=False):
     if extrabasisatoms is None:
         extrabasisatoms=[]
     pcfile=name+'.pc'
@@ -1702,6 +1768,13 @@ def create_orca_input_pc(name,elems,coords,orcasimpleinput,orcablockinput,charge
         for i,(el,c) in enumerate(zip(elems,coords)):
             if i in extrabasisatoms:
                 orcafile.write('{} {} {} {} newgto \"{}\" end\n'.format(el,c[0], c[1], c[2], extrabasis))
+            #Atom-specific basis-dict option (new basis set definition for each atom)
+            elif atom_specific_basis_dict is not None:
+                print("Writing atom-specific basis for atom:", i)
+                #Regular line
+                orcafile.write('{} {} {} {} \n'.format(el,c[0], c[1], c[2]))
+                for bline in atom_specific_basis_dict[(el,i)]:
+                    orcafile.write(str(bline))
             #Adding fragment specification
             elif fragment_indices != None:
                 fragmentindex= search_list_of_lists_for_index(i,fragment_indices)
@@ -1713,11 +1786,24 @@ def create_orca_input_pc(name,elems,coords,orcasimpleinput,orcablockinput,charge
         orcafile.write('*\n')
         if propertyblock != None:
             orcafile.write(propertyblock)
+        # For ROHF job, add newjob and switch to UHF noiter
+        if ROHF_UHF_swap:
+            newjobline=f"""\n$new_job
+{orcasimpleinput.replace("ROHF","UHF noiter ")}
+{orcablockinput}
+* xyz {charge} {mult}
+"""
+            orcafile.write(newjobline)
+            for i,(el,c) in enumerate(zip(elems,coords)):
+                orcafile.write('{} {} {} {} \n'.format(el,c[0], c[1], c[2]))
+            orcafile.write('*\n')
+        
+        
 #Create simple ORCA inputfile from elems,coords, input, charge, mult,pointcharges
 #Allows for extraline that could be another '!' line or block-inputline.
 def create_orca_input_plain(name,elems,coords,orcasimpleinput,orcablockinput,charge,mult, Grad=False, Hessian=False, extraline='',
                             HSmult=None, atomstoflip=None, extrabasis=None, extrabasisatoms=None, moreadfile=None, propertyblock=None,
-                            ghostatoms=None, dummyatoms=None,fragment_indices=None):
+                            ghostatoms=None, dummyatoms=None,fragment_indices=None, atom_specific_basis_dict=None, ROHF_UHF_swap=False):
     if extrabasisatoms == None:
         extrabasisatoms=[]
     if ghostatoms == None:
@@ -1754,8 +1840,16 @@ def create_orca_input_plain(name,elems,coords,orcasimpleinput,orcablockinput,cha
             orcafile.write('*xyz {} {}\n'.format(charge,mult))
 
         for i,(el,c) in enumerate(zip(elems,coords)):
+            #Extra basis on each atom
             if i in extrabasisatoms:
                 orcafile.write('{} {} {} {} newgto \"{}\" end\n'.format(el,c[0], c[1], c[2], extrabasis))
+            #Atom-specific basis-dict option (new basis set definition for each atom)
+            elif atom_specific_basis_dict is not None:
+                print("Writing atom-specific basis for atom:", i)
+                #Regular line
+                orcafile.write('{} {} {} {} \n'.format(el,c[0], c[1], c[2]))
+                for bline in atom_specific_basis_dict[(el,i)]:
+                    orcafile.write(str(bline))
             #Setting atom to be a ghost atom
             elif i in ghostatoms:
                 orcafile.write('{}{} {} {} {} \n'.format(el,":", c[0], c[1], c[2]))
@@ -1770,6 +1864,17 @@ def create_orca_input_plain(name,elems,coords,orcasimpleinput,orcablockinput,cha
         orcafile.write('*\n')
         if propertyblock != None:
             orcafile.write(propertyblock)
+        # For ROHF job, add newjob and switch to UHF noiter
+        if ROHF_UHF_swap:
+            newjobline=f"""\n$new_job
+{orcasimpleinput.replace("ROHF","UHF noiter ")}
+{orcablockinput}
+* xyz {charge} {mult}
+"""
+            orcafile.write(newjobline)
+            for i,(el,c) in enumerate(zip(elems,coords)):
+                orcafile.write('{} {} {} {} \n'.format(el,c[0], c[1], c[2]))
+            orcafile.write('*\n')
 # Create ORCA pointcharge file based on provided list of elems and coords (MM region elems and coords)
 # and list of point charges of MM atoms
 def create_orca_pcfile(name,coords,listofcharges):
@@ -1978,7 +2083,8 @@ def grabatomcharges_ORCA(chargemodel,outputfile):
 def run_orca_plot(filename, option, orcadir=None, gridvalue=40, specify_density=False,
     densityfilename=None, individual_file=False, mo_operator=0, mo_number=None,):
     print("Running run_orca_plot")
-    orcadir = check_ORCA_location(orcadir)
+    print("Gridvalue:", gridvalue)
+    orcadir = check_ORCA_location(orcadir, modulename="run_orca_plot")
     def check_if_file_exists():
         if os.path.isfile(densityfilename) is True:
             print("File exists")
@@ -2005,21 +2111,22 @@ def run_orca_plot(filename, option, orcadir=None, gridvalue=40, specify_density=
     else:
         plottype = 1
     if option=='density' or option=='spindensity':
+        print("Plotting density")
         if specify_density is True:
             print("specify_density: True. Picking density filename:", densityfilename)
             #Choosing e.g. MRCI density
             p = sp.run([orcadir + '/orca_plot', filename, '-i'], stdout=sp.PIPE,
-                input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\nn\n{densityfilename}\n10\n11\n\n', encoding='ascii')
+                input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\nn\n{densityfilename}\n11\n12\n\n', encoding='ascii')
         else:
             p = sp.run([orcadir + '/orca_plot', filename, '-i'], stdout=sp.PIPE,
-                       input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\ny\n10\n11\n\n', encoding='ascii')
+                       input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\ny\n11\n12\n\n', encoding='ascii')
     elif option=='mo':
         p = sp.run([orcadir + '/orca_plot', filename, '-i'], stdout=sp.PIPE,
-                       input=f'5\n7\n4\n{gridvalue}\n3\n{mo_operator}\n2\n{mo_number}\n10\n11\n\n', encoding='ascii')
+                       input=f'5\n7\n4\n{gridvalue}\n3\n{mo_operator}\n2\n{mo_number}\n11\n12\n\n', encoding='ascii')
     #If plotting CIS/TDDFT density then we tell orca_plot explicity.
     elif option == 'cisdensity' or option == 'cisspindensity':
         p = sp.run([orcadir + '/orca_plot', filename, '-i'], stdout=sp.PIPE,
-                       input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\nn\n{densityfilename}\n10\n11\n\n', encoding='ascii')
+                       input=f'5\n7\n4\n{gridvalue}\n1\n{plottype}\nn\n{densityfilename}\n11\n12\n\n', encoding='ascii')
 
     #print(p.returncode)
 
@@ -2167,6 +2274,22 @@ def MRCI_natocc_grab(filename):
             if 'NATURAL ORBITAL GENERATION' in line:
                 natoccgrab=True
     return natoccupations
+
+def FIC_natocc_grab(filename):
+    natoccgrab=False
+    natoccupations=[]
+    with open(filename) as f:
+        for line in f:
+            if natoccgrab:
+                if 'N[' in line:
+                    natoccupations.append(float(line.split()[-1]))
+                if ' --- Storing natural' in line:
+                    natoccgrab=False
+                    return natoccupations
+            if 'Natural Orbital Occupation Numbers:' in line:
+                natoccgrab=True
+    return natoccupations
+
 
 def QRO_occ_energies_grab(filename):
     occgrab=False
@@ -2456,7 +2579,7 @@ def ORCA_External_Optimizer(fragment=None, theory=None, orcadir=None, charge=Non
 
     #Making sure we have a working ORCA location
     print("Checking for ORCA location")
-    orcadir = check_ORCA_location(orcadir)
+    orcadir = check_ORCA_location(orcadir, modulename="ORCA_External_Optimizer")
     #Making sure ORCA binary works (and is not orca the screenreader)
     check_ORCAbinary(orcadir)
     #Adding orcadir to PATH. Only required if ORCA not in PATH already
@@ -2517,7 +2640,7 @@ def make_molden_file_ORCA(GBWfile, orcadir=None, printlevel=2):
     print_line_with_mainheader("make_molden_file_ORCA")
 
     #Check for ORCA dir
-    orcadir = check_ORCA_location(orcadir)
+    orcadir = check_ORCA_location(orcadir, modulename="make_molden_file_ORCA")
 
     print("Inputfile:", GBWfile)
     #GBWfile should be ORCA file. Can be SCF GBW (.gbw) or natural orbital WF file (.nat)
@@ -2564,7 +2687,7 @@ def run_orca_mapspc(filename, option, start=0.0, end=100, unit='eV', broadening=
     print(f"points: {points}")
     print(f"orcadir: {orcadir}")
 
-    orcadir = check_ORCA_location(orcadir)
+    orcadir = check_ORCA_location(orcadir, modulename="run_orca_mapspc")
     p = sp.run([orcadir + '/orca_mapspc', filename, option, f"-{unit}" f"-w{broadening}", f"-n{points}"], encoding='ascii')
 
 #Simple function to get elems and coordinates from ORCA outputfile
@@ -2799,46 +2922,125 @@ def orblocfind(outputfile, atomindex_strings=None, popthreshold=0.1):
 
     return alphalist, betalist
 
+#Reverse JSON to GBW
+def create_GBW_from_json_file(jsonfile, orcadir=None):
+
+    orcafile_basename = jsonfile.split('.')[0]
+    orcadir = check_ORCA_location(orcadir, modulename="create_GBW_from_json_file")
+    print("Calling orca_2json to convert JSON-file to GBW-file")
+    sp.call([orcadir+'/orca_2json', jsonfile, '-gbw'])
+
+    return f"{orcafile_basename}_copy.gbw"
+
 #Using orca_2json to create JSON file from ORCA GBW file
-def create_ORCA_json_file(file, orcadir=None):
+#Format options: json, bson, ubjson, msgpack
+def create_ORCA_json_file(file, orcadir=None, format="json", basis_set=True, mo_coeffs=True, one_el_integrals=True,
+                          two_el_integrals=False, two_el_integrals_type="ALL", dipole_integrals=False, full_int_transform=False):
     print("create_ORCA_json_file")
-    orcadir = check_ORCA_location(orcadir)
-    orcafile_basename = file.split('.')[0]
+    orcadir = check_ORCA_location(orcadir, modulename="create_ORCA_json_file")
+    #orcafile_basename = file.split('.')[0]
+    orcafile_basename='.'.join(file.split(".")[0:-1])
 
     print(f"Creating {orcafile_basename}json.conf file")
-    confstring="""{
-"MOCoefficients": true,
-"Basisset": true,
-"H": true,
-"S": true,
-"T": true,
+
+    prop_1e_integrals_line=""
+    two_el_integrals_line=""
+    basis_set_line=""
+    mo_coeff_line=""
+    #NOTE: problems with FullTrafo (orca_2json crashes)
+    if full_int_transform is True:
+        full_transform_integrals_line="\"FullTrafo\": true,"
+    else:
+        #Needs to be empty string
+        full_transform_integrals_line=""
+    if basis_set is True:
+        print("Requesting printout of basis set")
+        basis_set_line="\"Basisset\": true,"
+    if dipole_integrals is True:
+        print("Requesting printout of dipole integrals")
+        prop_1e_integrals_line="\"1elPropertyIntegrals\": [\"dipole\"],"
+    if one_el_integrals is True:
+        print("Requesting printout of 1-electron integrals")
+        one_el_integrals_line="\"1elIntegrals\": [\"H\",\"S\", \"T\", \"V\"],"
+    if two_el_integrals is True:
+        print("Requesting printout of 2-electron integrals")
+        if two_el_integrals_type == "ALL":
+            print("Warning: two_el_integrals_type set to ALL. This means all 2-electron integrals (a lot!)")
+            two_el_integrals_line=f"\"2elIntegrals\": [\"MO_PQRS\", \"MO_PRQS\"],"
+        else:
+            two_el_integrals_line=f"\"2elIntegrals\": [\"MO_{two_el_integrals_type}\"],"
+    if mo_coeffs is True:
+        print("Requesting printout of MO coefficients")
+        mo_coeff_line="\"MOCoefficients\": true,"
+    print("here")
+    confstring=f"""{{
+
+{mo_coeff_line}
+{basis_set_line}
+{one_el_integrals_line}
+{prop_1e_integrals_line}
+{two_el_integrals_line}
+{full_transform_integrals_line}
 "Densities": ["all"],
-"JSONFormats": ["json", "bson"]
-}
+"JSONFormats": ["{format}"]
+}}
 """
+
+#"JSONFormats": ["json", "bson", "msgpack"]
     with open(f"{orcafile_basename}.json.conf", "w") as conffile:
         conffile.write(confstring)
 
-    print("Calling orca_2json to get JSON file:")
-    sp.call([orcadir+'/orca_2json', orcafile_basename, '-format', '-json'])
+    #Creating copy of conf-file so that orca_2json picks up abnormal name
+    #shutil.copy(f"{orcafile_basename}.json.conf", )
 
-    print(f"Created file: {orcafile_basename}.json")
+    print("Calling orca_2json to get JSON/BSON file:")
+    #Note: ORCA6 changed from basename to file
+    print("file:", file)
+    sp.call([orcadir+'/orca_2json', file, f'-{format}'])
 
-    return f"{orcafile_basename}.json"
+    # This is better when filename contains multiple .
+    jsonfile='.'.join(file.split(".")[0:-1])+f'.{format}'
+    print(f"Created file:", jsonfile)
+    mb_size = (os.path.getsize(jsonfile))/(1024*1024)
+    print(f"Size: {mb_size:7.1f} MB")
+    return jsonfile
 
 #Parse ORCA json file
 #Good for getting MO-coefficients, MO-energies, basis set, H,S,T matrices, densities etc.
 def read_ORCA_json_file(file):
     print("read_ORCA_json_file")
+    print("File:", file)
     # Parsing of files
-    import json
+    orjson_loaded=False
+    try:
+        print("Trying to import orjson")
+        import orjson as jsonlib
+        print("orjson loaded")
+        orjson_loaded=True
+    except ModuleNotFoundError:
+        print("orjson library not found (recommended for fast reading)")
+        print("Trying ujson instead")
+        try:
+            import ujson as jsonlib
+            print("ujson loaded")
+        except ModuleNotFoundError:
+            print("ujson library not found either")
+            print("can be installed like this: pip install ujson")
+            print("Falling back to standard json library (slower)")
+            import json as jsonlib
 
-    orcafile_basename = file.split('.')[0]
+    orcafile_basename='.'.join(file.split(".")[0:-1])
+    print("orcafile_basename:", orcafile_basename)
     print("Opening file")
     print()
+    #Loading
     with open(f"{orcafile_basename}.json") as f:
-        data = json.load(f)
+        if orjson_loaded:
+            data = jsonlib.loads(f.read())
+        else:
+            data = jsonlib.load(f)
     print("Looping over dictionary")
+    print("")
     for i in data["Molecule"]:
         print(i)
 
@@ -2852,10 +3054,80 @@ def read_ORCA_json_file(file):
     print("Molecule-CoordinateUnits:", data["Molecule"]["CoordinateUnits"])
     print("Molecule-HFTyp:", data["Molecule"]["HFTyp"])
     print()
-    print("Densities found:")
-    for d in data["Molecule"]["Densities"]:
-        print(d)
+    print("Densities found:", data["Molecule"]["Densities"].keys())
     print("Dictionary keys of data", data["Molecule"].keys())
+    #Note: only returning sub-dict Molecule
+    return data["Molecule"]
+
+def write_ORCA_json_file(data,filename="ORCA_ASH.json", ORCA_version="6.0.0"):
+    print("write_ORCA_json_file")
+    print("Filename:", filename)
+    import json as jsonlib
+
+    #Add header if missing from datadict
+    final_data={}
+    if "ORCA Header" not in data:
+        final_data["ORCA Header"] = {"Version":ORCA_version}
+        final_data["Molecule"]=data
+    else:
+        final_data=data
+    #print("data:", data)
+    with open(filename, "w") as f:
+        #f.write(jsonlib.dumps(data))
+        jsonlib.dump(final_data, f,indent=2)
+
+    return filename
+
+def read_ORCA_msgpack_file(file):
+    print("read_ORCA_msgpack_file function")
+    print("Trying to import msgspec")
+    msgspec_loaded=False
+    msgpack_loaded=False
+
+    try:
+        import msgspec
+        msgspec_loaded=True
+        print("Imported msgspec successfully")
+    except ModuleNotFoundError:
+        print("Problem importing msgspec (pip install msgspec)")
+        print("Trying msgpack library")
+        try:
+            import msgpack
+            msgpack_loaded=True
+            print("Imported msgpack successfully")
+        except ModuleNotFoundError:
+            print("msgpack not found.")
+            print("Install like this: pip install msgpack")
+            ashexit()
+    
+    # Read msgpack file
+    with open(file, "rb") as data_file:
+        if msgspec_loaded:
+            data = msgspec.msgpack.decode(data_file.read())
+        elif msgpack_loaded:
+            byte_data = data_file.read()
+            data = msgpack.unpackb(byte_data)
+
+    return data["Molecule"]
+
+# Read BSON files using independent BSON codec for Python (not MongoDB)
+#Msgpack probably better
+def read_ORCA_bson_file(bsonfile):
+    try:
+        print("Importing bson")
+        import bson
+    except ImportError:
+        print("Error: bson module not found. Please install bson module")
+        print("See: https://pypi.org/project/bson/ and https://github.com/py-bson/bson")
+        print("pip install bson")
+        ashexit()
+
+    print("reading BSON file:", bsonfile)
+    with open(bsonfile, 'rb') as f:
+        content = f.read()
+        base = 0
+        while base < len(content):
+            base, data = bson.decode_document(content, base)
     return data["Molecule"]
 
 def get_densities_from_ORCA_json(data):
@@ -2882,7 +3154,16 @@ def grab_ORCA_wfn(data=None, jsonfile=None, density=None):
         pass
     elif jsonfile != None:
         print("JSON file provided. Reading")
-        data = read_ORCA_json_file(jsonfile)
+
+        if '.json' in jsonfile:
+            data = read_ORCA_json_file(jsonfile)
+        elif '.bson' in jsonfile:
+            data = read_ORCA_bson_file(jsonfile)
+        elif '.msgpack' in jsonfile:
+            data = read_ORCA_msgpack_file(jsonfile)
+        else:
+            print("Unknown file")
+            ashexit()
 
     if density == None:
         print("Error: You must pick a density option")
@@ -2904,7 +3185,9 @@ def grab_ORCA_wfn(data=None, jsonfile=None, density=None):
     #Grabbing C (MO coefficients)
     mos = data["MolecularOrbitals"]["MOs"]
     C = np.array([m["MOCoefficients"] for m in mos])
-    C = np.transpose(C)
+    #Transposing C so that rows are AOs and columns are MOs
+    C = np.transpose(C) #NOTE IMPORTANT
+    print("Warning: matrix C was transposed so that rows are AOs and columns are MOs")
 
     #MO energies and occupations
     MO_energies = np.array([m["OrbitalEnergy"] for m in mos])
@@ -2914,14 +3197,14 @@ def grab_ORCA_wfn(data=None, jsonfile=None, density=None):
     print("MO_occs:", MO_occs)
     print("MO coeffs:", C)
 
-    return DM_AO,C,S, AO_basis, AO_order
+    return DM_AO,C,S, MO_occs, MO_energies, AO_basis, AO_order
 
 
 #Function to prepare ORCA orbitals for another ORCA calculation
 #Mainly for getting natural orbitals
-def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblock="", extrablock="", extrainput="",
-        MP2_density=None, MDCI_density=None, memory=10000, numcores=1, charge=None, mult=None, moreadfile=None,
-        gtol=2.50e-04, nmin=1.98, nmax=0.02, CAS_nel=None, CAS_norb=None,CASCI=False,
+def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblock="", extrablock="", extrainput="", label="frag",
+        MP2_density=None, MDCI_density=None, AutoCI_density=None, memory=10000, numcores=1, charge=None, mult=None, moreadfile=None,
+        gtol=2.50e-04, nmin=1.98, nmax=0.02, CAS_nel=None, CAS_norb=None,CASCI=False, natorb_iterations=None,
         FOBO_excitation_options=None, MRCI_natorbiterations=0, MRCI_tsel=1e-6,
         ROHF=False, ROHF_case=None, MP2_nat_step=False, MREOMtype="MR-EOM",
         NMF=False, NMF_sigma=None):
@@ -2940,11 +3223,11 @@ def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblo
 
     if orbitals_option is None:
         print("Error: No orbitals_option keyword provided to ORCA_orbital_setup. This is necessary")
-        print("orbitals_option: MP2, RI-MP2, CCSD, QCISD, CEPA/1, NCPF/1, HF, MRCI, CEPA2")
+        print("orbitals_option: MP2, RI-MP2, CCSD, CCSD(T), DLPNO-CCSD, QCISD, CEPA/1, NCPF/1, HF, MRCI, CEPA2")
         ashexit()
 
     #Check charge/mult
-    charge,mult = check_charge_mult(charge, mult, "QM", fragment, "bla", theory=None)
+    charge,mult = check_charge_mult(charge, mult, "QM", fragment, "ORCA_orbital_setup", theory=None)
 
     #ORBITALS_OPTIONS
     #If ROHF only is requested we activate the ROHF procedure
@@ -2962,7 +3245,7 @@ def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblo
             print("Options: unrelaxed or relaxed")
             ashexit()
         print("MP2_density option:", MP2_density)
-    if 'CCSD' in orbitals_option:
+    if orbitals_option == 'CCSD':
         MDCIkeyword="CCSD"
         print("CCSD-type orbitals requested. This means that natural orbitals will be created from the chosen MDCI_density ")
         if MDCI_density is None:
@@ -2970,6 +3253,23 @@ def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblo
             print("Options: linearized, unrelaxed or orbopt")
             ashexit()
         print("MDCI_density option:", MDCI_density)
+    if orbitals_option == "DLPNO-CCSD":
+        MDCIkeyword="DLPNO-CCSD"
+        print("DLPNO-CCSD-type orbitals requested. This means that natural orbitals will be created from the chosen MDCI_density ")
+        if MDCI_density is None:
+            print("Error: MDCI_density must be provided")
+            print("Options: linearized, unrelaxed or orbopt")
+            ashexit()
+        print("MDCI_density option:", MDCI_density) 
+    if orbitals_option == "CCSD(T)":
+        AUTOCIkeyword="AUTOCI-CCSD(T)"
+        print("CCSD(T)-type natural orbitals requested.")
+        print("Since ORCA 6.0 this is available in the AUTOCI module only")
+        if AutoCI_density is None:
+            print("Error: AutoCI_density keyword must be provided (not MDCI_density)")
+            print("Options: linearized, unrelaxed or orbopt")
+            ashexit()
+        print("AutoCI_density option:", AutoCI_density)
     if 'QCISD' in orbitals_option:
         MDCIkeyword="QCISD"
         print("QCISD-type orbitals requested. This means that natural orbitals will be created from the chosen MDCI_density")
@@ -3007,10 +3307,14 @@ def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblo
     #FOBO
     if 'FOBO' in orbitals_option:
         print("FOBO-type orbitals requested.")
+
         if CASCI is True:
             print("Warning: CAS-CI is True. No CASSCF orbital optimization will be carried out.")
-            print("Warning: To get natural orbitals from CAS-CI calculation we modify gtol instead of using noiter")
-            gtol=9999999
+            extrainput += " noiter "
+        elif natorb_iterations is not None:
+            print("FOBO and natorbitations active. Turning off CASSCF orbital optimization")
+            extrainput += " noiter "
+
     if 'MR' in orbitals_option:
         print("orbitals_option:", orbitals_option)
         if 'SORCI' in orbitals_option:
@@ -3040,9 +3344,19 @@ def ORCA_orbital_setup(orbitals_option=None, fragment=None, basis=None, basisblo
             print("Warning: CAS-CI is True. No CASSCF orbital optimization will be carried out.")
             print("Warning: To get natural orbitals from CAS-CI calculation we modify gtol instead of using noiter")
             gtol=9999999
+    if 'FIC' in orbitals_option:
+        if 'DDCI1' in orbitals_option:
+            MRCIkeyword="FIC-DDCI1"
+        AUTOCIkeyword="FIC-DDCI3"
+        print("AUTOCIkeyword:", AUTOCIkeyword)
+        print("AUTOCI-type orbitals requested. This means that natural orbitals will be created from the chosen AUTOCI density")
+        if CAS_nel is None or CAS_nel is None:
+            print("AUTOCI natural orbitals required CAS_nel and CAS_norb keywords for CAS active space calculation")
+            ashexit()
+    if natorb_iterations is not None:
+        print("Natural orbital iterations will be performed!")
 
-
-    #Always tarting from scratch, unless moreadfile is provided (will override)
+    #Always starting from scratch, unless moreadfile is provided (will override)
     autostart_option=False
 
     ######################
@@ -3066,8 +3380,10 @@ end
 %scf
 {rohfcase_line}
 end
+{extrablock}
 """
-        rohf = ash.ORCATheory(orcasimpleinput=f"! ROHF {basis} tightscf", orcablocks=rohfblocks, numcores=numcores, autostart=autostart_option,
+        rohf = ash.ORCATheory(orcasimpleinput=f"! ROHF {basis} tightscf notrah  {extrainput}", orcablocks=rohfblocks,
+                              numcores=numcores, autostart=autostart_option,
                                  label='ROHF', filename="ROHF", save_output_with_label=True, moreadfile=moreadfile)
         Singlepoint(theory=rohf,fragment=fragment)
         #Now SCF-step is done. Now adding noiter to extrainput and moreadfile
@@ -3139,6 +3455,7 @@ end
         alldone=True
         mofile=f"{rohf.filename}.gbw"
         natoccgrab=None
+        nat_occupations=None
     elif orbitals_option =="MP2" :
         mp2blocks=f"""
         %maxcore {memory}
@@ -3208,8 +3525,27 @@ end
         mdcilabel = MDCIkeyword.replace("/","") #To avoid / in CEPA/1 etc
         natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput} {MDCIkeyword} {basis} autoaux tightscf", orcablocks=ccsdblocks, numcores=numcores,
                                  label=mdcilabel, save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
-        mofile=f"{natorbs.filename}.mdci.nat"
-        natoccgrab=CCSD_natocc_grab
+        #mofile=f"{natorbs.filename}.mdci.nat"
+        #natoccgrab=CCSD_natocc_grab
+        #For open-shell systems we get unrestricted natorbs it seems
+        #Now diagonalizing manually
+        natoccgrab=None
+    elif orbitals_option =="DLPNO-CCSD":
+        #NOTE: Due to a bug in ORCA version 5 and 6.0.0
+        # Requesting DLPNO-CCSD natural orbitals from any density results in a wrong coupled cluster problem
+        # Hence we have to request density calculation alone and then diagonalize to get the natural orbitals manually
+        ccsdblocks=f"""
+        %maxcore {memory}
+        {basisblock}
+        {extrablock}
+        %mdci
+        density {MDCI_density}
+        end
+        """
+        mdcilabel = MDCIkeyword.replace("/","") #To avoid / in CEPA/1 etc
+        natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput} {MDCIkeyword} {basis} autoaux tightscf", orcablocks=ccsdblocks, numcores=numcores,
+                                 label=mdcilabel, save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
+        natoccgrab=None
     elif 'CASSCF' in orbitals_option:
         casscfblocks=f"""
         %maxcore {memory}
@@ -3243,23 +3579,59 @@ end
         natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput} {MRCIkeyword} {basis} autoaux tightscf", orcablocks=mrciblocks, numcores=numcores,
                                  label=MRCIkeyword, save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
         mofile=f"{natorbs.filename}.b0_s0.nat"
-        natoccgrab=None
+
+        def dummy(f): return f
+        natoccgrab=dummy
         print("Warning: can not get full natural occupations from MRCI+Q calculation")
+    elif 'CCSD(T)' in orbitals_option:
+        autociblocks=f"""
+        %maxcore {memory}
+        {basisblock}
+        {extrablock}
+        %autoci
+        density {AutoCI_density}
+        natorbs true
+        end
+        """
+        natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput} {AUTOCIkeyword} {basis} autoaux tightscf", orcablocks=autociblocks, numcores=numcores,
+                                 label=AUTOCIkeyword, save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
+        natoccgrab=None
+    elif 'FIC' in orbitals_option:
+        autociblocks=f"""
+        %maxcore {memory}
+        {basisblock}
+        {extrablock}
+        %casscf
+        gtol {gtol}
+        nel {CAS_nel}
+        norb {CAS_norb}
+        end
+        %autoci
+        density {AutoCI_density}
+        natorbs true
+        end
+        """
+        natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput} {AUTOCIkeyword} {basis} autoaux tightscf", orcablocks=autociblocks, numcores=numcores,
+                                 label=AUTOCIkeyword, save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
+        mofile=f"ficddci3.mult.{mult}.root.0.FIC-DDCI3.nat"
+        natoccgrab=FIC_natocc_grab
+
     elif 'FOBO' in orbitals_option:
         #Defining a ROHF-type CASSCF
         if CAS_nel is None or CAS_norb is None:
             print("CAS_nel and CAS_norb not given. Guessing ROHF-type CASSCF based on multiplicity")
             CAS_nel=mult-1
             CAS_norb=mult-1
+            print(f"CAS_nel: {CAS_nel} CAS_norb:{CAS_norb}")
 
         if CAS_nel == 0:
             print("Closed-shell system. Adding AllowRHF keyword")
-            extrainput="AllowRHF"
+            extrainput+="AllowRHF"
         #FOBO_options
         if FOBO_excitation_options is None:
             FOBO_excitation_options = {'1h':1,'1p':1,'1h1p':1,'2h':0,'2h1p':1}
             print("Using default FOBO_excitation_options:", FOBO_excitation_options)
-
+        #exit()
         mrciblocks=f"""
 %maxcore {memory}
 {basisblock}
@@ -3287,41 +3659,321 @@ natorbs 2
 tsel {MRCI_tsel}
 end
 """
+        #NOTE: Added noiter here to prevent CASSCF module from messing with orbitals
         natorbs = ash.ORCATheory(orcasimpleinput=f"! {extrainput}  {basis} autoaux tightscf", orcablocks=mrciblocks, numcores=numcores,
                                  label='FOBO', save_output_with_label=True, autostart=autostart_option, moreadfile=moreadfile)
         mofile=f"{natorbs.filename}.b0_s0.nat"
-        natoccgrab=None
-        print("Warning: can not get full natural occupations from MRCI+Q calculation")
+        def dummy(f): return f
+        natoccgrab=dummy
+        print("Warning: can not get full natural occupations from FOBO calculation")
     else:
         print("Error: orbitals_option not recognized")
         ashexit()
 
     #Run natorb calculation unless everything is done
     if alldone is False:
-        ash.Singlepoint(theory=natorbs, fragment=fragment, charge=charge, mult=mult)
 
-    #Print natural occupations if available
-    if natoccgrab is not None:
-        nat_occupations=natoccgrab(natorbs.filename+'.out')
-        print(f"{orbitals_option} Natorb. ccupations:", nat_occupations)
-        print("\nTable of natural occupation numbers")
-        print(f"Dashed lines indicated occupations within nmin={nmin} and nmax={nmax} window")
-        print("")
-        print("{:<9} {:6} ".format("Orbital", f"{orbitals_option}-nat-occ"))
-        print("----------------------------------------")
-        init_flag=False
-        final_flag=False
-        for index,(nocc) in enumerate(nat_occupations):
-            if init_flag is False and nocc<nmin:
-                print("-"*40)
-                init_flag=True
-            if final_flag is False and nocc<nmax:
-                print("-"*40)
-                final_flag=True
-            print(f"{index:<9} {nocc:9.4f}")
-    else:
-        nat_occupations=[]
+        if natorb_iterations:
+            print("Natural-orbital iterations option is ON!")
+            print(f"Will run {natorb_iterations} natural-orbital iterations")
+            for n_i in range(0,natorb_iterations):
 
-    print("\nReturning name of orbital file that can be used in next ORCATheory calculation (moreadfile option):", mofile)
+                print(f"Now running natorb iteration {n_i}")
+                ash.Singlepoint(theory=natorbs, fragment=fragment, charge=charge, mult=mult)
+
+                if n_i == 0:
+                    print("Iteration 0 done. Now setting moread option for next iteration")
+                    natorbs.moreadfile=mofile
+                    natorbs.moreadfile_always=True
+
+                nat_occupations=natoccgrab(natorbs.filename+'.out')
+                if orbitals_option not in ['MRCI','FOBO']:
+                    natocc_print(nat_occupations,orbitals_option,nmin,nmax)
+                os.rename(f"{natorbs.filename}.out", f"orca_natorbiter_{n_i}.out")
+        else:
+            print("Now running natorb calculation")
+            ash.Singlepoint(theory=natorbs, fragment=fragment, charge=charge, mult=mult)
+            if natoccgrab is not None:
+                nat_occupations=natoccgrab(natorbs.filename+'.out')
+                if orbitals_option not in ['MRCI','FOBO']:
+                    natocc_print(nat_occupations,orbitals_option,nmin,nmax)
+            #Special issues
+            elif orbitals_option == "DLPNO-CCSD":
+                print("Warning: DLPNO-CCSD natural orbitals requested (things can go wrong).")
+                print("Due to ORCA bug, DLPNO-CCSD natural orbitals come from ASH diagonalization of density")
+                mofile,nat_occupations = new_ORCA_natorbsfile_from_density(natorbs.gbwfile,densityname="mdcip",
+                    result_file="ORCA_DLPNOCCSD_nat_ASH", ORCA_version="6.0.0", change_from_UHF_to_ROHF=True)
+                natocc_print(nat_occupations,orbitals_option,nmin,nmax)
+            elif orbitals_option =="CCSD" or orbitals_option =="QCISD" or orbitals_option =="CEPA/1" or orbitals_option =="CPF/1":
+                print("Warning: open-shell MDCI natural orbitals give 2 sets of natural orbitals")
+                print("Undesirable so we do diagonalization manually")
+                mofile,nat_occupations = new_ORCA_natorbsfile_from_density(natorbs.gbwfile,densityname="mdcip",
+                    result_file=f"ORCA_MDCI{orbitals_option}_nat_ASH", ORCA_version="6.0.0", change_from_UHF_to_ROHF=True)
+                natocc_print(nat_occupations,orbitals_option,nmin,nmax)                
+            elif orbitals_option == "CCSD(T)":
+                print("Warning: CCSD(T) natural orbitals requested (things can go wrong).")
+                print("Natural orbitals not directly available and have to be manually diagonalized from density")
+                mofile, nat_occupations = new_ORCA_natorbsfile_from_density(natorbs.gbwfile,densityname="autocipur",
+                    result_file="ORCA_CCSD_T_nat_ASH", ORCA_version="6.0.0", change_from_UHF_to_ROHF=True)
+                natocc_print(nat_occupations,orbitals_option,nmin,nmax)
+            else:
+                nat_occupations=[]
+
+    #Renaming mofile (for purposes of having unique mofiles if we run this function multiple times)
+    newmofile = label + '_'+mofile
+    os.rename(mofile, newmofile)
+    print("\nReturning name of orbital file that can be used in next ORCATheory calculation (moreadfile option):", newmofile)
     print("Also returning natural occupations list:", nat_occupations)
-    return mofile, nat_occupations
+
+    return newmofile, nat_occupations
+
+def natocc_print(nat_occupations,orbitals_option,nmin,nmax):
+    print(f"{orbitals_option} Natorb. ccupations:", nat_occupations)
+    print("\nTable of natural occupation numbers")
+    print(f"Dashed lines indicated occupations within nmin={nmin} and nmax={nmax} window")
+    print("")
+    print("{:<9} {:6} ".format("Orbital", f"{orbitals_option}-nat-occ"))
+    print("----------------------------------------")
+    init_flag=False
+    final_flag=False
+    for index,(nocc) in enumerate(nat_occupations):
+        if init_flag is False and nocc<nmin:
+            print("-"*40)
+            init_flag=True
+        if final_flag is False and nocc<nmax:
+            print("-"*40)
+            final_flag=True
+        print(f"{index:<9} {nocc:9.4f}")
+
+
+#TODO: fix once ORCA6 bugfix is done
+# https://orcaforum.kofo.mpg.de/viewtopic.php?f=11&t=11657&p=47529&hilit=vpot#p47529
+# Either use input-file option (vpot.inp) or other
+def orca_vpot_run(gbwfile, densityfile, orcadir=None, numcores=1, input_points_string=None):
+    
+    vpotinp=f"""{numcores}                 # Number of parallel processes
+       {gbwfile}        # GBW File
+       {densityfile}      # Density
+       input_points.xyz        # Coordinates
+       vpot.out        # Output File
+"""
+    #TODO: make more flexible
+    if input_points_string is None:
+        input_points="""
+    6
+    5.0 0.0 0.0
+    -5.0 0.0  0.0
+    0.0 5.0  0.0
+    0.0-5.0  0.0
+    0.0 0.0  5.0
+    0.0 0.0 -5.0
+    """
+    else:
+        input_points=input_points_string
+    writestringtofile(vpotinp, "vpot.inp")
+    writestringtofile("input_points.xyz", input_points)
+    orcadir = check_program_location(orcadir,"orcadir", "orca_vpot")
+
+    p = sp.run([orcadir + '/orca_vpot', "vpot.inp", ], stdout=sp.PIPE)
+
+    #vpot.out
+
+    #TODO: Move to module_plotting
+    def plot_electrostatic_potential(vpotfile="vpot.out"):
+        pass
+
+
+
+
+# Function to create FCIDUMP file 
+# Change header_format from FCIDUMP to MRCC to get MRCC fort.55 file
+# TODO: SCF-type beyond RHF
+def create_ORCA_FCIDUMP(gbwfile, header_format="FCIDUMP", filename="FCIDUMP_ORCA", orca_json_format="msgpack",
+                        int_threshold=1e-16,  mult=1, full_int_transform=False,
+                        convert_UHF_to_ROHF=True):
+    module_init_time=time.time()
+    orca_basename=gbwfile.split('.')[0]
+
+    #Create JSON-file
+    print("Now creating JSON-file from GBW-file:", gbwfile)
+    jsonfile = create_ORCA_json_file(gbwfile, two_el_integrals=True, format=orca_json_format,
+                                     full_int_transform=full_int_transform)
+    print("jsonfile:", jsonfile)
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP: jsoncreate done', moduleindex=3)
+    #Get data from JSON-file as dict
+    print("Now reading JSON-file")
+    if orca_json_format == "json":
+        datadict = read_ORCA_json_file(jsonfile)
+    elif orca_json_format == "bson":
+        datadict = read_ORCA_bson_file(jsonfile)
+    elif orca_json_format == "msgpack":
+        datadict = read_ORCA_msgpack_file(jsonfile)
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP: jsonread done', moduleindex=3)
+    #Get coordinates from JSON (in Angstrom) and calculate repulsion
+    coords = np.array([i["Coords"] for i in datadict["Atoms"]])
+    nuc_charges = np.array([i["ElementNumber"] for i in datadict["Atoms"]])
+    from ash.modules.module_coords import nuc_nuc_repulsion
+    nuc_repulsion = nuc_nuc_repulsion(coords, nuc_charges)
+
+    #MO coefficients (used for 1-elec integrals)
+    mos = datadict["MolecularOrbitals"]["MOs"]
+    C = np.array([m["MOCoefficients"] for m in mos])
+
+    #Electrons
+    occupations = np.array([m["Occupancy"] for m in datadict["MolecularOrbitals"]["MOs"]])
+    print("Occupations:", occupations)
+
+    num_tot_orbs = len(occupations)
+    print("Total num orbitals:", num_tot_orbs)
+    num_occ_orbs = len(np.nonzero(occupations)[0])
+    print("Total num ccupied orbitals:", num_occ_orbs)
+    num_act_el= int(round(sum(occupations))) #Rounding up to deal with possible non-integer occupations
+    print("Number of (active) electrons:", num_act_el)
+
+    WF_assignment = ash.functions.functions_elstructure.check_occupations(occupations)
+    print("WF_assignment:", WF_assignment)
+    conversion=False
+    if WF_assignment == "RHF":
+        print("Occupation assignment is RHF")
+        print("This is straightforward")
+    elif WF_assignment == "ROHF":
+        print("Occupation assignment is ROHF")
+        print("This should be straightforward")
+    elif WF_assignment == "UHF":
+        print("Occupation assignment is UHF")
+        print("We currently can not handle UHF")
+        if convert_UHF_to_ROHF:
+            print("convert_UHF_to_ROHF is True")
+            print("Will hack UHF WF into ROHF")
+            print("Warning: not guaranteed to work")
+            num_act_el= int(round(sum(occupations)))
+            rohf_num_orbs= int(len(occupations)/2)
+            alpha_occupations = occupations[0:rohf_num_orbs]
+            beta_occupations = occupations[rohf_num_orbs:]
+            excess_alpha = int(sum(alpha_occupations)-sum(beta_occupations))
+            #Hacking occupations
+            new_occupations = []
+            for i in range(0,rohf_num_orbs):
+                if beta_occupations[i] == 1.0:
+                    new_occupations.append(2.0)
+                elif alpha_occupations[i] == 1.0:
+                    new_occupations.append(1.0)
+                else:
+                    new_occupations.append(0.0)
+            print("New dummy ROHF occupations:", new_occupations)
+            occupations=new_occupations
+            WF_assignment="ROHF"
+            conversion=True
+            #Now proceeding as if were ROHF
+
+            #Half of MO coefficients
+            #C = C[0:rohf_num_orbs]
+            C = C[:rohf_num_orbs,:rohf_num_orbs]
+    elif WF_assignment == "FRACT":
+        print("Occupation assignment is FRACT")
+        print("This could be problematic")
+        print("We will continue, however")
+        #MO coefficients
+
+
+    #Transpose MO coefficients
+    MO_coeffs = np.transpose(C)
+
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP: before int', moduleindex=3)
+    #1-electron integrals
+    H = np.array(datadict["H-Matrix"])
+    #1-elec
+    from functools import reduce
+    one_el = reduce(np.dot, (MO_coeffs.T, H, MO_coeffs))
+
+    # 2-electron integrals
+    twoint = datadict["2elIntegrals"]
+    #print("twoint:", twoint)
+    #exit()
+    mo_COUL_aa = np.array(datadict["2elIntegrals"][f"MO_PQRS"]["alpha/alpha"])
+    mo_EXCH_aa = np.array(datadict["2elIntegrals"][f"MO_PRQS"]["alpha/alpha"])
+
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP: after int', moduleindex=3)
+    # Creating integral tensor
+    orbind=num_tot_orbs
+    two_el_tensor=np.zeros((orbind,orbind,orbind,orbind))
+
+    #Processing Coulomb
+    for i in mo_COUL_aa:
+        two_el_tensor[int(i[0]), int(i[1]), int(i[2]), int(i[3])] = i[4]
+    #Processing Exchange,  NOTE: index swap because Exchange
+    for j in mo_EXCH_aa:
+        two_el_tensor[int(j[0]), int(j[2]), int(j[1]), int(j[3])] = j[4]
+    
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP: intproc done', moduleindex=3)
+    #Write file
+    from ash.functions.functions_elstructure import ASH_write_integralfile
+    ASH_write_integralfile(two_el_integrals=two_el_tensor, one_el_integrals=one_el,
+            nuc_repulsion_energy=nuc_repulsion, header_format=header_format,
+                                num_corr_el=num_act_el, filename=filename,
+                            int_threshold=int_threshold, scf_type=WF_assignment, mult=mult)
+    
+    print_time_rel(module_init_time, modulename='create_ORCA_FCIDUMP', moduleindex=2)
+    return filename
+
+
+
+# calculate_natorbs_from_density
+# Convenient function to get natural orbitals from any density even if ORCA did create the natural orbitals
+
+def calculate_ORCA_natorbs_from_density(gbwfile,densityname="mdcip"):
+    from ash.functions.functions_elstructure import diagonalize_DM_AO
+    #JSON file from GBW-file (NOTE: can be regular GBW-file even if we want the MDCI)
+    jsonfile = create_ORCA_json_file(gbwfile, format="json", basis_set=True, mo_coeffs=True)
+    DM_AO,C,S, MO_occs, MO_energies, AO_basis, AO_order = grab_ORCA_wfn(jsonfile=jsonfile, density=densityname)
+    natorb, natocc = diagonalize_DM_AO(DM_AO, S)
+
+    return natorb, natocc
+
+# Get natural orbitals of any calculated density of an ORCA calculation
+# Convenient when ORCA natural orbital printing is buggy
+# NOTE: Not fully tested
+def new_ORCA_natorbsfile_from_density(gbwfile, densityname="mdcip", result_file="ORCA_ASH", ORCA_version="6.0.0",
+                                      change_from_UHF_to_ROHF=True):
+    from ash.functions.functions_elstructure import diagonalize_DM_AO
+    #JSON file from GBW-file (NOTE: can be regular GBW-file even if we want the MDCI)
+    jsonfile = create_ORCA_json_file(gbwfile, format="json", basis_set=True, mo_coeffs=True)
+    #Read all molecular data from GBW
+    mol_data = read_ORCA_json_file(jsonfile)
+    #Get Wfn data only
+    DM_AO,C,S, MO_occs, MO_energies, AO_basis, AO_order = grab_ORCA_wfn(jsonfile=jsonfile, density=densityname)
+    #Diagonalize to get natural orbitals
+    natorb, natocc = diagonalize_DM_AO(DM_AO, S)
+
+    print(f"Density {densityname} diagonalized by ASH")
+    print("Natural orbital occupations:", natocc)
+    natorb_transposed=natorb.T
+    #Loop over MOs and replace canonical MOs with NOs
+    print("len(natorb_transposed):", len(natorb_transposed))
+    new_mos_sublist=[]
+    for i in range(0,len(natocc)):
+        #Grabbing old MO (may be UHF)
+        oldmo = mol_data["MolecularOrbitals"]["MOs"][i]
+        #Creating new MO using natorb MO coeffs and occupations. Setting orb energy to 0.0
+        #Note: This will delete any beta information
+        newmo = {"MOCoefficients":list(natorb_transposed[i]), "Occupancy":natocc[i], "OrbitalEnergy":0.0,
+                    "OrbitalSymLabel":oldmo["OrbitalSymLabel"], "OrbitalSymmetry":oldmo["OrbitalSymmetry"]}   
+        new_mos_sublist.append(newmo)
+
+    mol_data["MolecularOrbitals"]["MOs"] = new_mos_sublist
+    if change_from_UHF_to_ROHF is True:
+        print("Changing UHF to ROHF")
+        print("Skipping beta")
+        mol_data["HFTyp"] = "ROHF"
+        #Changing BF list from UHF to ROHF
+        mol_data["MolecularOrbitals"]["OrbitalLabels"] = mol_data["MolecularOrbitals"]["OrbitalLabels"][0:int(len(mol_data["MolecularOrbitals"]["OrbitalLabels"])/2)]
+        mol_data["Densities"] = "" #Removing densities
+
+    jsonfile = write_ORCA_json_file(mol_data,filename=f"{result_file}_mod.json", ORCA_version=ORCA_version)
+    print("New JSON-file created:", jsonfile)
+    newgbwfile = create_GBW_from_json_file(jsonfile)
+
+    #orca_basename=jsonfile.split('.')[0:-1]
+    #print("orca_basename:", orca_basename)
+
+    return newgbwfile, natocc

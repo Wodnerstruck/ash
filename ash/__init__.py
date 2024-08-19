@@ -7,25 +7,22 @@ import numpy as np
 import sys
 import atexit
 import pathlib
-#Getting ASH-path
+# Getting ASH-path
 ashpath = str(pathlib.Path(__file__).parent.resolve())
 print("ashpath:", ashpath)
 ###############
 # ASH modules
 ###############
-#import ash
+# import ash
 # Adding modules,interfaces directories to sys.path
 sys.path.insert(0, ashpath)
-#ashpath = os.path.dirname(ash.__file__)
 print("Sys path:", sys.path)
-#Add local geometric dir to syspath
-#sys.path.insert(0, ashpath+"/geometric-master")
 
 from .functions.functions_general import create_ash_env_file,blankline, BC, listdiff, print_time_rel, print_time_rel_and_tot, pygrep, \
-    printdebug, read_intlist_from_file, frange, writelisttofile, load_julia_interface, read_datafile, write_datafile, ashexit
+    printdebug, read_intlist_from_file, frange, writelisttofile, load_julia_interface, read_datafile, write_datafile, ashexit, natural_sort
 
 #Results dataclass
-from .modules.module_results import ASH_Results
+from .modules.module_results import ASH_Results,read_results_from_file
 
 # Fragment class and coordinate functions
 import ash.modules.module_coords
@@ -33,14 +30,13 @@ from .modules.module_coords import get_molecules_from_trajectory, eldict_covrad,
     write_xyzfile, make_cluster_from_box, read_ambercoordinates, read_gromacsfile, split_multimolxyzfile,distance_between_atoms, \
     angle_between_atoms, dihedral_between_atoms, pdb_to_smiles, xyz_to_pdb_with_connectivity, writepdb_with_connectivity, mol_to_pdb, sdf_to_pdb
 from .modules.module_coords import remove_atoms_from_system_CHARMM, add_atoms_to_system_CHARMM, getwaterconstraintslist,\
-    QMregionfragexpand, read_xyzfiles, Reaction, define_XH_constraints, simple_get_water_constraints, print_internal_coordinate_table,\
-    flexible_align_pdb, flexible_align_xyz, flexible_align
+    QMregionfragexpand, QMPC_fragexpand, read_xyzfiles, Reaction, define_XH_constraints, simple_get_water_constraints, print_internal_coordinate_table,\
+    flexible_align_pdb, flexible_align_xyz, flexible_align, insert_solute_into_solvent, nuc_nuc_repulsion
 
 # Singlepoint
 import ash.modules.module_singlepoint
 from .modules.module_singlepoint import Singlepoint, newSinglepoint, ZeroTheory, ScriptTheory, Singlepoint_fragments,\
      Singlepoint_theories, Singlepoint_fragments_and_theories, Singlepoint_reaction, Energy_decomposition
-
 
 # Parallel
 import ash.functions.functions_parallel
@@ -59,15 +55,17 @@ import ash.constants
 import ash.functions.functions_elstructure
 from .functions.functions_elstructure import read_cube, write_cube, write_cube_diff, diffdens_tool, create_cubefile_from_orbfile, diffdens_of_cubefiles,  \
     NOCV_density_ORCA, difference_density_ORCA, NOCV_Multiwfn,write_cube_sum,write_cube_product,create_density_from_orb, make_molden_file, \
-    diagonalize_DM_AO, diagonalize_DM, DM_AO_to_MO, DM_AO_to_MO, DM_MO_to_AO, select_space_from_occupations,select_indices_from_occupations
+    diagonalize_DM_AO, diagonalize_DM, DM_AO_to_MO, DM_AO_to_MO, DM_MO_to_AO, select_space_from_occupations,select_indices_from_occupations, ASH_write_integralfile
 
 #multiwfn interface
 import ash.interfaces.interface_multiwfn
 from .interfaces.interface_multiwfn import multiwfn_run
 # Spinprojection
 from .modules.module_spinprojection import SpinProjectionTheory
-#DualTheory
-from .modules.module_dualtheory import DualTheory
+# HybridTheory: DualTheory and WrapTheory
+from .modules.module_hybridtheory import DualTheory,WrapTheory
+#ONIOM
+from .modules.module_oniom import ONIOMTheory
 
 # Surface
 from .modules.module_surface import calc_surface, calc_surface_fromXYZ, read_surfacedict_from_file, write_surfacedict_to_file
@@ -75,12 +73,13 @@ from .modules.module_surface import calc_surface, calc_surface_fromXYZ, read_sur
 # # QMcode interfaces
 from .interfaces.interface_ORCA import ORCATheory, counterpoise_calculation_ORCA, ORCA_External_Optimizer, run_orca_plot, MolecularOrbitalGrab, \
     run_orca_mapspc, make_molden_file_ORCA, grab_coordinates_from_ORCA_output, ICE_WF_CFG_CI_size, orca_frag_guess, orblocfind, ORCAfinalenergygrab, \
-    read_ORCA_json_file, create_ORCA_json_file,get_densities_from_ORCA_json,grab_ORCA_wfn,ORCA_orbital_setup
+    read_ORCA_json_file, write_ORCA_json_file, create_GBW_from_json_file, create_ORCA_json_file,get_densities_from_ORCA_json,grab_ORCA_wfn, \
+        new_ORCA_natorbsfile_from_density, ORCA_orbital_setup, create_ORCA_FCIDUMP
 import ash.interfaces.interface_ORCA
 
 from .interfaces.interface_Psi4 import Psi4Theory
 from .interfaces.interface_dalton import DaltonTheory
-from .interfaces.interface_pyscf import PySCFTheory, pyscf_MR_correction, pyscf_CCSD_T_natorb_selection,KS_inversion_kspies,DFA_error_analysis
+from .interfaces.interface_pyscf import PySCFTheory, pyscf_MR_correction, pyscf_CCSD_T_natorb_selection,KS_inversion_kspies,DFA_error_analysis,pySCF_write_Moldenfile
 density_potential_inversion=KS_inversion_kspies #Temporary
 from .interfaces.interface_ipie import ipieTheory
 from .interfaces.interface_dice import DiceTheory
@@ -90,10 +89,12 @@ from .interfaces.interface_QUICK import QUICKTheory
 from .interfaces.interface_TeraChem import TeraChemTheory
 from .interfaces.interface_sparrow import SparrowTheory
 from .interfaces.interface_NWChem import NWChemTheory
+from .interfaces.interface_Gaussian import GaussianTheory
 from .interfaces.interface_CP2K import CP2KTheory
 from .interfaces.interface_BigDFT import BigDFTTheory
 from .interfaces.interface_deMon import deMon2kTheory
 from .interfaces.interface_ccpy import ccpyTheory
+from .interfaces.interface_MNDO import MNDOTheory
 
 from .interfaces.interface_CFour import CFourTheory, run_CFour_HLC_correction, run_CFour_DBOC_correction, convert_CFour_Molden_file
 from .interfaces.interface_xtb import xTBTheory
@@ -101,6 +102,10 @@ from .interfaces.interface_PyMBE import PyMBETheory
 from .interfaces.interface_MLatom import MLatomTheory
 #add new interface for XEDA
 from .interfaces.interface_XEDA import XEDATheory
+from .interfaces.interface_DRACO import get_draco_radii
+from .interfaces.interface_DFTD4 import DFTD4Theory, calc_DFTD4
+from .interfaces.interface_torch import TorchTheory
+from .interfaces.interface_packmol import packmol_solvate
 
 # MM: external and internal
 from .interfaces.interface_OpenMM import OpenMMTheory, OpenMM_MD, OpenMM_MDclass, OpenMM_Opt, OpenMM_Modeller, \
@@ -108,7 +113,11 @@ from .interfaces.interface_OpenMM import OpenMMTheory, OpenMM_MD, OpenMM_MDclass
         OpenMM_metadynamics, Gentle_warm_up_MD, check_gradient_for_bad_atoms, get_free_energy_from_biasfiles, \
         free_energy_from_bias_array,metadynamics_plot_data, merge_pdb_files
 
-#TODO: Temporary aliases, to be deleted
+# General aliases
+MolecularDynamics = OpenMM_MD
+MetaDynamics = OpenMM_metadynamics
+
+# TODO: Temporary aliases, to be deleted
 OpenMM_box_relaxation = OpenMM_box_equilibration
 small_molecule_parameterizor=small_molecule_parameterizer
 
@@ -144,7 +153,7 @@ from .modules.module_molcrys import molcrys, Fragmenttype
 # Geometry optimization
 from .functions.functions_optimization import SimpleOpt, BernyOpt
 
-#geomeTRIC interface
+# geomeTRIC interface
 from .interfaces.interface_geometric_new import geomeTRICOptimizer,GeomeTRICOptimizerClass
 Optimizer = geomeTRICOptimizer
 Opt = geomeTRICOptimizer
@@ -165,8 +174,13 @@ from .modules.module_workflows import ReactionEnergy, thermochemprotocol_reactio
 import ash.modules.module_benchmarking
 from .modules.module_benchmarking import run_benchmark
 
+#Small helper tools
+from .interfaces.interface_small_helpers import create_adaptive_minimal_basis_set
 
-#Plotting
+#Machine-learning tools
+from .modules.module_machine_learning import create_ML_training_data
+
+# Plotting
 import ash.modules.module_plotting
 from .modules.module_plotting import reactionprofile_plot, contourplot, plot_Spectrum, MOplot_vertical, ASH_plot
 
@@ -188,7 +202,7 @@ if ash.settings_ash.settings_dict["print_exit_footer"] is True:
         atexit.register(ash.ash_header.print_timings)
 
 # Julia dependency. Load in the beginning or not.
-#As both PyJulia and PythonCall are a bit slow to load, it is best to only load when needed (current behaviour)
+# As PythonCall can be a bit slow to load, it is best to only load when needed (current behaviour)
 if ash.settings_ash.settings_dict["load_julia"] is True:
     try:
         print("Importing Julia interface and loading functions")
