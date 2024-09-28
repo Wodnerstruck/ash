@@ -1930,7 +1930,7 @@ class OpenMMTheory:
                 #bla1,bla2,bla3 = self.nonbonded_force.getParticleParameters(atomindex)
                 #print("bla1,bla2,bla3", bla1,bla2,bla3)
 
-        printdebug("done here")
+        #printdebug("done here")
         print_time_rel(timeA, modulename="update_LJ_epsilons")
 
     # Updating charges in OpenMM object. Used to set QM charges to 0 for example
@@ -1977,7 +1977,43 @@ class OpenMMTheory:
         #self.update_simulation()
         printdebug("done here")
         print_time_rel(timeA, modulename="update_charges")
-
+        
+    # Zeroing LJ interactions
+    def zero_LJ_epsilons(self):
+        import openmm
+        timeA = time.time()
+        print("Zeroing LJ interactions in OpenMM object.")
+        if isinstance(self.nonbonded_force, openmm.NonbondedForce):
+            for i in range(self.nonbonded_force.getNumParticles()):
+                charge, sigma, _ = self.nonbonded_force.getParticleParameters(
+                    i)
+                self.nonbonded_force.setParticleParameters(i,charge, sigma, 0.0)
+        elif isinstance(self.nonbonded_force, openmm.CustomNonbondedForce):
+            for i in range(self.nonbonded_force.getNumParticles()):
+                charge, sigma, _ = self.nonbonded_force.getParticleParameters(
+                    i)
+                self.nonbonded_force.setParticleParameters(
+                    i, [charge, sigma, 0.0])
+        print_time_rel(timeA, modulename="Zero_LJ_epsilons")
+    # Zeroing charges    
+    def zero_charges(self):
+        import openmm
+        timeA = time.time()
+        print("Zeroing charges in OpenMM object.")
+        if isinstance(self.nonbonded_force, openmm.NonbondedForce):
+            for i in range(self.nonbonded_force.getNumParticles()):
+                _, sigma, epsilon = self.nonbonded_force.getParticleParameters(
+                    i)
+                self.nonbonded_force.setParticleParameters(
+                    i, 0.0, sigma, epsilon)
+        elif isinstance(self.nonbonded_force, openmm.CustomNonbondedForce):
+            for i in range(self.nonbonded_force.getNumParticles()):
+                _, sigma, epsilon = self.nonbonded_force.getParticleParameters(
+                    i)
+                self.nonbonded_force.setParticleParameters(
+                    i, [0.0, sigma, epsilon])
+        print_time_rel(timeA, modulename="Zero_charges")
+        
     def modify_bonded_forces(self, atomlist):
         import openmm
         timeA = time.time()
@@ -5032,7 +5068,7 @@ def get_free_energy_from_biasfiles(temperature,biasfactor,CV1_gridwith,CV2_gridw
     if CV2_gridwith == None:
         full_bias=np.zeros((CV1_gridwith))
     else:
-	    full_bias=np.zeros((CV2_gridwith,CV1_gridwith))
+        full_bias=np.zeros((CV2_gridwith,CV1_gridwith))
 
     #Looping over bias-files
     print("full_bias shape:", full_bias.shape)
