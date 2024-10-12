@@ -16,14 +16,15 @@ import ash.functions.functions_elstructure
 import ash.constants
 import ash.settings_ash
 import ash.functions.functions_parallel
+from typing import List, Optional
 # XEDA Thoery class
 
 
 class XEDATheory:
     def __init__(self, numcores=1, printlevel=2, label='xeda',
-                 scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, filename='xeda',
-                 scf_maxiter=128, eda=False, ct=False, blw=False, eda_atm=None, eda_charge=None, eda_mult=None,
-                 bc=None):
+                 scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, 
+                 scf_maxiter=128, eda=False, ct=False, blw=False, eda_atm:Optional[List]=None, 
+                 eda_charge:Optional[List]=None, eda_mult:Optional[List]=None, bc=None):
         # self.analytic_gradient = False
         # self.analytic_hessian = False
         self.theorynamelabel = "XEDA"
@@ -53,7 +54,6 @@ class XEDATheory:
                 ashexit()
         self.properties = {}
         self.label = label
-        self.filename = filename
 
         # SCF
         self.scf_type = scf_type
@@ -97,21 +97,21 @@ class XEDATheory:
     def set_numcores(self, numcores):
         self.numcores = numcores
         print("Setting XEDA numcores to: ", self.numcores)
-        # import py_api.mole as mole
+        # import pyxm.mole as mole
         # mole.xscf_world.set_thread_num(numcores)
 
     def set_DFT_options(self):
-        import py_api.scf as scf
+        import pyxm.scf as scf
         self.hf = scf.scf_info(self.mol)
         self.hf.init_hf()
         self.hf.init_guess_sad()
         if self.blw is not True:
             if self.functional is not None:
                 self.hf.load_dft(self.functional)
-
-    def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None):
+    
+    def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None ):
         if PC is True:
-            import py_api.builder as builder
+            import pyxm.builder as builder
             # QM/MM pointcharge embedding
             print("PC True. Adding pointcharges")
             MMcharges = np.array(MMcharges)
@@ -124,8 +124,8 @@ class XEDATheory:
     def create_mol(self, qm_elems, current_coords, charge, mult):
         if self.printlevel >= 1:
             print("Creating mol object")
-        import py_api.mole as mole
-        if not self.eda:
+        import pyxm.mole as mole
+        if self.eda is False:
             coords_string = ash.modules.module_coords.create_coords_string_xscf(
                 qm_elems, current_coords)
             self.mol = mole.mol_info(
@@ -154,7 +154,7 @@ class XEDATheory:
         if self.printlevel >= 1:
             print("\nrun_DM-EDA")
         module_init_time = time.time()
-        import py_api.eda as eda
+        import pyxm.eda as eda
         if self.functional is not None:
             self.eda_obj = eda.eda_info(self.mol, dft=self.functional)
         else:
@@ -166,7 +166,9 @@ class XEDATheory:
         print_time_rel(module_init_time, modulename='XEDA run_EDA',
                        moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
         if self.ct is not True:
-            return (self.eda_obj.ES, self.eda_obj.EX, self.eda_obj.REP, self.eda_obj.POL, self.eda_obj.EC, self.eda_obj.TOL)
+            energy_components = {'ES': self.eda_obj.ES, 'EX': self.eda_obj.EX, 'REP': self.eda_obj.REP, 
+                                 'POL': self.eda_obj.POL, 'EC': self.eda_obj.EC, 'TOL': self.eda_obj.TOL}
+            return energy_components
         else:
             raise NotImplementedError(
                 "Charge-transfer functionality is not yet implemented.")
@@ -203,7 +205,7 @@ class XEDATheory:
             print("Object-label:", self.label)
             print("Run-label:", label)
 
-            import py_api.mole as mole
+            import pyxm.mole as mole
             mole.xscf_world.set_thread_num(self.numcores)
 
             if self.printlevel > 1:

@@ -1,0 +1,51 @@
+digraph "classes_qmmmeda" {
+    rankdir=TB
+    splines=ortho
+    nodesep=0.3
+    ranksep=0.6
+    fontname="Helvetica"
+    fontsize=9
+    size="16,9!"  # 设置固定的 16:9 比例
+    ratio=fill
+    dpi=300
+    node [fontname="Helvetica", fontsize=9, shape="record", style="filled", fillcolor="#FFFFFFE0"]
+    edge [fontname="Helvetica", fontsize=7, labeldistance=1.5, labelangle=45]
+
+    "ash.interfaces.QMMMEDA.QMMMConfig" [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">
+            <TR><TD PORT="header" BGCOLOR="#E0E0E0"><B>QMMMConfig</B></TD></TR>
+            <TR><TD ALIGN="LEFT" BALIGN="LEFT">charge : int<BR/>eda_atm : List[int]<BR/>eda_charge : List[int]<BR/>eda_mult : List[int]<BR/>forcefield : Optional[str]<BR/>mult : int<BR/>numcores : int<BR/>pdbfile : Optional[str]<BR/>qm_atoms : List[int]<BR/>qm_theory_full : XEDATheory<BR/>xmlfiles : Optional[List[str]]<BR/>xyzfile : Optional[str]</TD></TR>
+        </TABLE>
+    >];
+
+    "ash.interfaces.QMMMEDA.QMMMTheory_EDA" [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">
+            <TR><TD PORT="header" BGCOLOR="#E0E0E0"><B>QMMMTheory_EDA</B></TD></TR>
+            <TR><TD ALIGN="LEFT" BALIGN="LEFT">MMenergy : int<BR/>MMgradient<BR/>PCgradient : ndarray<BR/>QM_MM_energy<BR/>QM_MM_gradient<BR/>QMenergy : float<BR/>QMgradient : ndarray<BR/>QMgradient_wo_linkatoms : ndarray<BR/>do_qm : bool<BR/>extforce_energy<BR/>linkatoms : bool<BR/>pointchargecoords : ndarray<BR/>qm_coords : ndarray<BR/>runcalls<BR/>truncPC_E_correction</TD></TR>
+            <TR><TD ALIGN="LEFT" PORT="methods">elstat_run( ..., charge, mult)</TD></TR>
+        </TABLE>
+    >];
+
+    "ash.interfaces.QMMMEDA.QMMM_EDA" [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">
+            <TR><TD PORT="header" BGCOLOR="#E0E0E0"><B>QMMM_EDA</B></TD></TR>
+            <TR><TD ALIGN="LEFT" BALIGN="LEFT">config<BR/>energy_monomer1 : ASH_Results<BR/>energy_monomer2 : ASH_Results<BR/>energy_sup : ASH_Results<BR/>fragment1 : Fragment<BR/>fragment2 : Fragment<BR/>full_fragment : Fragment<BR/>is_fragment1_mm : bool<BR/>is_fragment2_mm : bool<BR/>mm_elec_interaction<BR/>mm_novdw1 : ASH_Results<BR/>mm_novdw2 : ASH_Results<BR/>mm_novdw_full : ASH_Results<BR/>mm_theory1 : NoneType, OpenMMTheory<BR/>mm_theory2 : NoneType, OpenMMTheory<BR/>mm_theory_full : OpenMMTheory<BR/>mm_without_nonbonded1 : ASH_Results<BR/>mm_without_nonbonded2 : ASH_Results<BR/>mm_without_nonbonded_full : ASH_Results<BR/>pdbfile1 : str<BR/>pdbfile2 : str<BR/>qm_atoms1 : list<BR/>qm_atoms2 : list<BR/>qm_theory1<BR/>qm_theory2<BR/>qmmm_theory1<BR/>qmmm_theory2<BR/>qmmm_theory_full<BR/>vdw_interaction</TD></TR>
+            <TR><TD ALIGN="LEFT" PORT="methods"><I>bsse_mono_cal</I>()<BR/><I>cal_qmmm_elec</I>()<BR/>initialize_fragment()<BR/>run()<BR/><I>run_eda</I>()<BR/>split_fragment(pdbfile, split_indices: List[int])<BR/>split_qmatms()<BR/>validate_config()</TD></TR>
+        </TABLE>
+    >];
+
+    "ash.interfaces.QMMMEDA.XEDA_EB" [label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">
+            <TR><TD PORT="header" BGCOLOR="#E0E0E0"><B>XEDA_EB</B></TD></TR>
+            <TR><TD ALIGN="LEFT">&nbsp;</TD></TR>
+        </TABLE>
+    >];
+
+    "ash.interfaces.QMMMEDA.QMMMTheory_EDA":methods -> "ash.interfaces.QMMMEDA.QMMM_EDA":header [arrowhead="diamond", arrowtail="none", fontcolor="darkgreen", label="qmmm_theory_full", style="solid"];
+    "ash.interfaces.QMMMEDA.QMMMTheory_EDA":methods -> "ash.interfaces.QMMMEDA.QMMM_EDA":header [arrowhead="diamond", arrowtail="none", fontcolor="darkgreen", label="qmmm_theory1", style="solid"];
+    "ash.interfaces.QMMMEDA.QMMMTheory_EDA":methods -> "ash.interfaces.QMMMEDA.QMMM_EDA":header [arrowhead="diamond", arrowtail="none", fontcolor="darkgreen", label="qmmm_theory2", style="solid"];
+    "ash.interfaces.QMMMEDA.QMMMConfig":header -> "ash.interfaces.QMMMEDA.QMMM_EDA":header [arrowhead="odiamond", arrowtail="none", fontcolor="darkgreen", label="config", style="solid"];
+
+    { rank=same; "ash.interfaces.QMMMEDA.QMMMConfig" "ash.interfaces.QMMMEDA.QMMMTheory_EDA" }
+    { rank=same; "ash.interfaces.QMMMEDA.QMMM_EDA" "ash.interfaces.QMMMEDA.XEDA_EB" }
+}

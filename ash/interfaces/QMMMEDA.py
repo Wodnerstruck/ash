@@ -1,10 +1,11 @@
 from dataclasses import dataclass
-from ash import Fragment, XEDATheory, OpenMMTheory, QMMMTheory, ashexit, Singlepoint
+from ash import Fragment, XEDATheory, OpenMMTheory, QMMMTheory, ashexit, Singlepoint, Energy_decomposition
 import openmm.app as app
 import numpy as np
 import copy
 import time
 import ash.modules.module_coords
+import ash.constants
 from typing import List, Optional
 from ash.functions.functions_general import ashexit, BC, blankline, listdiff, print_time_rel, printdebug, print_line_with_mainheader, writelisttofile, print_if_level
 import ash.settings_ash
@@ -14,7 +15,10 @@ from ash.modules.module_QMMM import fullindex_to_qmindex, linkatom_force_fix
 @dataclass
 class QMMMConfig:
     numcores: int
-    qm_theory_full: XEDATheory
+    functional: str
+    basis: str
+    scf_tpye: str = 'RHF'
+    # qm_theory_full: XEDATheory
     qm_atoms: List[int]
     charge: int
     mult: int
@@ -80,7 +84,7 @@ class QMMMTheory_EDA(QMMMTheory):
                 used_qmcoords, np.array(linkatoms_coords), axis=0)
 
         # store used_qmcoords
-        self.qm_coords = used_qmcoords
+        self.qm_coords = used_qmcoords  # for eda input with link_atoms
         # Update self.pointchargecoords based on new current_coords
         # print("self.dipole_correction:", self.dipole_correction)
         if self.dipole_correction:
@@ -499,7 +503,163 @@ class QMMMTheory_EDA(QMMMTheory):
 
 
 class XEDA_EB(XEDATheory):
-    pass
+    def __init__(self, numcores=1, printlevel=2, label='xeda',
+                 scf_type=None, basis=None, basis_file=None, ecp=None, functional=None,
+                 scf_maxiter=128, eda=False, ct=False, blw=False, eda_atm=None, eda_charge=None, eda_mult=None,
+                 bc=None, bc_list=None):
+        super().__init__(
+            self,
+            numcores=numcores,
+            printlevel=printlevel,
+            label=label,
+            scf_type=scf_type,
+            basis=basis,
+            basis_file=basis_file,
+            ecp=ecp,
+            functional=functional,
+            scf_maxiter=scf_maxiter,
+            eda=eda,
+            ct=ct,
+            blw=blw,
+            eda_atm=eda_atm,
+            eda_charge=eda_charge,
+            eda_mult=eda_mult,
+            bc=bc)
+        self.bc_list = bc_list
+
+    def set_embedding_options(self, PC=False, MM_coords_l=None, MMcharges_l=None):
+        if PC is True:
+            import pyxm.builder as builder
+            # QM/MM pointcharge embedding
+            print("PC True. Adding pointcharges")
+            MMcharges_nd = [np.array(l) if isinstance(l, (list, np.ndarray)) else l for l in MMcharges_l]
+            MM_coords_nd = [np.array(l) if isinstance(l, (list, np.ndarray)) else l for l in MM_coords_l]
+            chgs = []
+            for mm_charges, mm_coords in zip(MMcharges_nd, MM_coords_nd):
+                if mm_charges is not None and mm_coords is not None:
+                    chgs.append(np.ravel(np.column_stack(
+                    (mm_charges[:, np.newaxis], mm_coords * ash.constants.ang2bohr))))
+                else:
+                    chgs.append([])
+            self.bc = builder.charge_info(self.mol, chgs)
+            self.hf.load_ham(self.bc, 1.0, 0.0)
+
+    def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
+            elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+            charge=None, mult=None):
+        self.prepare_run(current_coords=current_coords, elems=elems, charge=charge, mult=mult,
+                         current_MM_coords=current_MM_coords,
+                         MMcharges=MMcharges, qm_elems=qm_elems, Grad=Grad, PC=PC,
+                         numcores=numcores, pe=pe, potfile=potfile, restart=restart, label=label)
+        # Actual run
+        return self.actualrun(
+            current_coords=current_coords,
+            current_MM_coords=current_MM_coords,
+            MMcharges=MMcharges,
+            qm_elems=qm_elems,
+            elems=elems,
+            Grad=Grad,
+            PC=PC,
+            numcores=numcores,
+            pe=pe,
+            potfile=potfile,
+            restart=restart,
+            label=label,
+            charge=charge,
+            mult=mult)
+
+    def prepare_run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
+                    elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+                    charge=None, mult=None):
+
+        module_init_time = time.time()
+        if self.printlevel > 0:
+            print(BC.OKBLUE, BC.BOLD,
+                  "------------PREPARING XEDA INTERFACE-------------", BC.END)
+            print("Object-label:", self.label)
+            print("Run-label:", label)
+
+            import pyxm.mole as mole
+            mole.xscf_world.set_thread_num(self.numcores)
+
+            if self.printlevel > 1:
+                print("Number of XEDA  threads is:", self.numcores)
+
+                # Checking if charge and mult has been provided
+        if self.eda is False and (charge is None or mult is None):
+            print(
+                BC.FAIL, "Error. charge and mult has not been defined for XEDATheory.run method", BC.END)
+            ashexit()
+        if current_coords is not None:
+            pass
+        else:
+            print("no current_coords")
+            ashexit()
+
+        if qm_elems is None:
+            if elems is None:
+                print("No elems provided")
+                ashexit()
+            else:
+                qm_elems = elems
+        #####################
+        # CREATE MOL OBJECT
+        #####################
+        self.create_mol(qm_elems, current_coords, charge, mult)
+        #####################
+        # DFT
+        #####################
+        self.set_DFT_options()
+        ##############################
+        # EMBEDDING OPTIONS
+        ##############################
+        self.set_embedding_options(
+            PC=PC, MM_coords_l=current_MM_coords, MMcharges_l=MMcharges)
+
+        if self.printlevel > 1:
+            print_time_rel(module_init_time,
+                           modulename='XEDA prepare', moduleindex=2)
+
+    def actualrun(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None,
+                  elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
+                  charge=None, mult=None):
+
+        module_init_time = time.time()
+        #############################################################
+        # RUNNING
+        #############################################################
+
+        #####################
+        # SCF STEP
+        #####################
+        if self.eda is not True and self.blw is not True:
+            if self.printlevel > 1:
+                print(f"Running SCF (SCF-type: {self.scf_type})")
+            self.energy = self.run_SCF()
+            if self.bc is not None:
+                self.bc.cal_energy(self.hf.d_matrix)
+            if self.printlevel >= 0:
+                print("Single-point XEDA energy:", self.energy)
+                if self.bc is not None:
+                    print("QM_charge interaction energy:", self.bc.energy[0])
+                print_time_rel(module_init_time,
+                               modulename='XEDA actualrun', moduleindex=2)
+
+            return self.energy + self.bc.energy[0] if self.bc is not None else self.energy
+        elif self.eda is True:
+            if self.printlevel > 1:
+                print(f"Running SCF (SCF-type: {self.scf_type})")
+            e_tol = self.run_SCF()
+            eda_results = self.run_EDA()
+            return eda_results
+        elif self.blw is True:
+            blw_results = self.run_BLW()
+            return blw_results
+
+        if self.printlevel >= 1:
+            print()
+            print(BC.OKBLUE, BC.BOLD,
+                  "------------ENDING XEDA INTERFACE-------------", BC.END)
 
 
 class QMMM_EDA:
@@ -508,7 +668,14 @@ class QMMM_EDA:
         self.config = config
         self.validate_config()
         self.initialize_fragment()
-        self.config.qm_theory_full.set_numcores(config.numcores)
+        self.qm_theory_full = XEDATheory(
+            numcores=self.config.numcores,
+            scf_type=self.config.scf_tpye,
+            basis=self.config.basis,
+            functional=self.config.functional
+        )
+        self.qmmm_theory1  = None
+        self.qmmm_theory2  = None
 
     def validate_config(self):
         if self.config.charge != sum(self.config.eda_charge):
@@ -550,13 +717,9 @@ class QMMM_EDA:
             pdbfile=self.pdbfile2, charge=self.config.eda_charge[1], mult=self.config.eda_mult[1])
 
     def split_qmatms(self):
-        self.qm_atoms1 = []
-        self.qm_atoms2 = []
-        for i in self.config.qm_atoms:
-            if i < self.config.eda_atm[0]:
-                self.qm_atoms1.append(i)
-            else:
-                self.qm_atoms2.append(i - self.config.eda_atm[0])
+        split_point = self.config.eda_atm[0]
+        self.qm_atoms1 = list(filter(lambda x: x < split_point, self.config.qm_atoms))
+        self.qm_atoms2 = list(map(lambda x: x - split_point, filter(lambda x: x >= split_point, self.config.qm_atoms)))
 
     def _prepare_theories(self):
         self._prepare_qm_theories()
@@ -564,8 +727,8 @@ class QMMM_EDA:
         self._prepare_qmmm_theories()
 
     def _prepare_qm_theories(self):
-        self.qm_theory1 = copy.deepcopy(self.config.qm_theory_full)
-        self.qm_theory2 = copy.deepcopy(self.config.qm_theory_full)
+        self.qm_theory1 = copy.deepcopy(self.qm_theory_full)
+        self.qm_theory2 = copy.deepcopy(self.qm_theory_full)
 
     def _prepare_mm_theories(self):
         self.split_fragment(self.config.pdbfile, self.config.eda_atm)
@@ -613,10 +776,11 @@ class QMMM_EDA:
     def _prepare_qmmm_theories(self):
         self.qmmm_theory_full = QMMMTheory_EDA(
             fragment=self.full_fragment,
-            qm_theory=self.config.qm_theory_full,
+            qm_theory=self.qm_theory_full,
             mm_theory=self.mm_theory_full,
             qmatoms=self.config.qm_atoms,
-            embedding='Elstat')
+            embedding='Elstat',
+            do_qm=False)
         if self.is_fragment1_mm:
             self.qmmm_theory1 = QMMMTheory_EDA(
                 fragment=self.fragment1,
@@ -634,7 +798,7 @@ class QMMM_EDA:
                 embedding='Elstat',
                 do_qm=False)
 
-    def run(self):
+    def run(self) -> None:
         self._prepare_theories()
         self._run_qmmm()
 
@@ -723,10 +887,56 @@ class QMMM_EDA:
             self.mm_elec_interaction = (self.mm_novdw_full.energy - self.mm_without_nonbonded_full.energy) - (
                 self.mm_novdw1.energy - self.mm_without_nonbonded1.energy) - (self.mm_novdw2.energy - self.mm_without_nonbonded2.energy)
 
-    def cal_qmmm_elec(self):
-        
-        
-        raise NotImplementedError("Not impl")
+    def bsse_eda_cal(self):
+       # QMenergy = self.qm_theory.run(current_coords=used_qmcoords,
+        # current_MM_coords=self.pointchargecoords, MMcharges=self.pointcharges, mm_elems=self.mm_elems_for_qmprogram,
+        # qm_elems=self.current_qmelems, Grad=False, PC=self.PC, numcores=numcores, charge=charge, mult=mult）
+        mono1_qm_elems = self.qmmm_theory1.current_qmelems if self.is_fragment1_mm else self.fragment1.elems
+        mono2_qm_elems = self.qmmm_theory2.current_qmelems if self.is_fragment2_mm else self.fragment2.elems
+        full_qm_elems = self.qmmm_theory_full.current_qmelems
+       
+        if (lm1 := len(mono1_qm_elems)) + (lm2 := len(mono2_qm_elems)) == len(full_qm_elems):
+            raise RuntimeError("DM_EDA(EB): Monomer QM elements are not consistent with full QM elements!")
+        final_qm_elems = mono1_qm_elems + mono2_qm_elems
+        qm_eda_atm = [lm1, lm2]
+        qm_eda_mult = [self.config.eda_mult[0], self.config.eda_mult[1]]
 
-    def run_eda(self):
+        mono1_qm_coords = self.qmmm_theory1.qm_coords if self.is_fragment1_mm else self.fragment1.coords
+        mono2_qm_coords = self.qmmm_theory2.qm_coords if self.is_fragment2_mm else self.fragment2.coords
+        final_qm_coords = np.concatenate([mono1_qm_coords, mono2_qm_coords], axis=0)
+        
+        eda_fragment = Fragment(coords=final_qm_coords, elems=final_qm_elems,
+                                charge=self.config.charge, mult=self.config.mult)
+        
+        mono1_mm_charges = self.qmmm_theory1.pointcharges if self.is_fragment1_mm else None
+        mono2_mm_charges = self.qmmm_theory2.pointcharges if self.is_fragment2_mm else None
+        full_mm_charges = self.qmmm_theory_full.pointcharges
+        
+        len_mono1_mm_charges = len(mono1_mm_charges) if mono1_mm_charges is not None else 0
+        len_mono2_mm_charges = len(mono2_mm_charges) if mono2_mm_charges is not None else 0
+        if len_mono1_mm_charges + len_mono2_mm_charges == len(full_mm_charges):
+            raise RuntimeError("DM_EDA(EB): Monomer MM charges are not consistent with full MM charges!")
+        
+        mm_charges_list = [full_mm_charges, mono1_mm_charges, mono2_mm_charges]
+        
+        mono1_mm_coords = self.qmmm_theory1.pointchargecoords if self.is_fragment1_mm else None 
+        mono2_mm_coords = self.qmmm_theory2.pointchargecoords if self.is_fragment2_mm else None
+        full_mm_coords = self.qmmm_theory_full.pointchargecoords
+        
+        mm_coords_list = [full_mm_coords, mono1_mm_coords, mono2_mm_coords]
+        
+        self.eda_obj = XEDA_EB(numcores=self.config.numcores, label='xeda_eb', scf_type=self.config.scf_tpye, 
+                               basis=self.config.basis, functional=self.config.functional, eda=True,
+                               eda_atm=qm_eda_atm, eda_mult=qm_eda_mult)
+        
+        energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj,dmeda_eb=True, 
+                                                 MM_charges=mm_charges_list, MM_coords=mm_coords_list
+                                             )
+        d_matrices = self.eda_obj.hf.d_matrix
+        self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
+        qmmm_ele = sum(qmmm_ele)
+        return energy_components, qmmm_ele
+
+    def cal_qmmm_elec(self):
+
         raise NotImplementedError("Not impl")

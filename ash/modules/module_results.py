@@ -28,7 +28,7 @@ class ASH_Results:
     gradients_dict: dict = None
     
     #EDA components
-    eda_components: tuple = None
+    eda_components: dict = None
     #parallel Multi-energy job
     #Name of worker directories that could be accessed later
     # parallel Multi-energy job

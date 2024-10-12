@@ -9,7 +9,7 @@ import numpy as np
 import time
 import subprocess as sp
 import shutil
-
+from typing import Optional, List
 import ash
 from ash.functions.functions_general import ashexit, BC,print_time_rel,print_line_with_mainheader
 from ash.modules.module_coords import check_charge_mult
@@ -49,6 +49,11 @@ def Singlepoint(fragment=None, theory=None, Grad=False, charge=None, mult=None, 
 
     # Check charge/mult
     charge, mult = check_charge_mult(charge, mult, theory.theorytype, fragment, "Singlepoint", theory=theory, printlevel=printlevel)
+    if mult != 1 and hasattr(theory, "scf_type"):
+        if theory.scf_type.upper() == 'RHF' or theory.scf_type.upper() == 'RKS':
+            print(BC.WARNING,"WARNING: Mult is not 1, but you used RHF/RKS, change to UHF/UKS",BC.END)
+            theory.scftype = 'UHF'
+        
 
     # Run a single-point energy job with gradient
     if Grad:
@@ -73,6 +78,11 @@ def Singlepoint(fragment=None, theory=None, Grad=False, charge=None, mult=None, 
             print()
             print("Doing single-point Energy job on fragment. Formula: {} Label: {} ".format(fragment.prettyformula,fragment.label))
             print(f"Charge: {charge} Mult: {mult}") #Charge/mult should have been defined so we print
+            
+        if mult != 1 and hasattr(theory, "scf_type"):
+            if theory.scf_type.upper() == 'RHF' or theory.scf_type.upper() == 'RKS':
+                print(BC.WARNING,"WARNING: Mult is not 1, but you used RHF/RKS, change to UHF/UKS",BC.END)
+                theory.scftype = 'UHF'
         # Run
         energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult)
 
@@ -91,25 +101,32 @@ def Singlepoint(fragment=None, theory=None, Grad=False, charge=None, mult=None, 
         return result
 
 #Energy decomposition
-def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, printlevel=2):
+def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, printlevel=2,
+                         dmeda_eb=False, MM_charges: Optional[List]=None, MM_coords: Optional[List]=None):
     '''Energy decomposition analysis function: runs a EDA calculation using ASH theory and ASH fragment.'''
     if printlevel >= 1:
         print_line_with_mainheader("Energy decomposition analysis function")
-    module_init_time=time.time()
+
     if fragment is None or theory is None:
         print(BC.FAIL,"Singlepoint requires a fragment and a theory object",BC.END)
         ashexit()
     coords=fragment.coords
     elems=fragment.elems 
        
-    charge,mult = check_charge_mult(charge, mult, theory.theorytype, fragment, "EDA", theory=theory)
+    charge, mult = check_charge_mult(charge, mult, theory.theorytype, fragment, "EDA", theory=theory)
     if printlevel >= 1:
         print()
         print("Doing energy decomposition on fragment. Formula: {} Label: {} ".format(fragment.prettyformula,fragment.label))
         print(f"Charge: {charge} Mult: {mult}")
-        
-    energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult)
-    result = ASH_Results(label="Energy decomposition", energy_contributions=energy, charge=charge, mult=mult)
+    if dmeda_eb is False:    
+        energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult)
+    else:
+        if MM_charges is None:
+            print(BC.FAIL,"Background charges must be provided for EDA_EB",BC.END)
+            ashexit()
+        energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult, 
+                            MMcharges=MM_charges, MM_coords=MM_coords)
+    result = ASH_Results(label="Energy decomposition", eda_components=energy, charge=charge, mult=mult)
     return result
     
 #Single-point energy function that runs calculations on 1 fragment using multiple theories. Returns a list of energies.
