@@ -269,14 +269,17 @@ class XEDATheory:
                 if self.bc is not None:
                     print("QM_charge interaction energy:", self.bc.energy[0])
                 print_time_rel(module_init_time,
-                               modulename='XEDA actualrun', moduleindex=2)
+                               modulename='XSCF actualrun', moduleindex=2)
 
             return self.energy + self.bc.energy[0] if self.bc is not None else self.energy
         elif self.eda is True:
             if self.printlevel > 1:
                 print(f"Running SCF (SCF-type: {self.scf_type})")
             e_tol = self.run_SCF()
+            print_time_rel(module_init_time, modulename='XSCF acturalrun', moduleindex=2)
+            module_init_time = time.time()
             eda_results = self.run_EDA()
+            print_time_rel(module_init_time, modulename='XEDA actualrun', moduleindex=2)
             return eda_results
         elif self.blw is True:
             blw_results = self.run_BLW()

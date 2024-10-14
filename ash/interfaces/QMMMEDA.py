@@ -31,6 +31,15 @@ class QMMMConfig:
     xmlfiles: Optional[List[str]] = None
 
 
+@dataclass
+class QMMMEDAterms:
+    ele: float = 0.0
+    ex: float = 0.0
+    rep: float = 0.0
+    pol: float = 0.0
+    ec: float = 0.0
+    tot: float = 0.0
+
 class QMMMTheory_EDA(QMMMTheory):
 
     def __init__(self, qm_theory=None, qmatoms=None, fragment=None, mm_theory=None, charges=None,
@@ -664,8 +673,10 @@ class XEDA_EB(XEDATheory):
 
 class QMMM_EDA:
 
-    def __init__(self, config: QMMMConfig):
+    def __init__(self, config: QMMMConfig, printlevel=2):
         self.config = config
+        self.printlevel = printlevel
+        print_line_with_mainheader("QMMMEDA initialization")
         self.validate_config()
         self.initialize_fragment()
         self.qm_theory_full = XEDATheory(
@@ -674,8 +685,29 @@ class QMMM_EDA:
             basis=self.config.basis,
             functional=self.config.functional
         )
-        self.qmmm_theory1  = None
-        self.qmmm_theory2  = None
+        self.qmmm_eda_results:QMMMEDAterms = QMMMEDAterms()
+        self.mm_elec_interaction:float = 0.0
+        self.vdw_interaction:float = 0.0
+        self.total_interaction:float = 0.0
+
+    def __repr__(self):
+        def format_line(label, abbr, value):
+            hartree = f"{value:20.6f}"
+            kcal_mol = f"{value*ash.constants.harkcal:15.2f}"
+            return f" {label:<31} {abbr:>4}= {hartree:>22} {kcal_mol:>15}"
+
+        return f"""\
+QM/MM EDA RESULTS
+ --------------------------------------------------------------------------------
+ ALL BASIS SET                                       HARTREE          KCAL/MOL
+ --------------------------------------------------------------------------------
+{format_line("ELECTROSTATIC ENERGY", "ES", self.qmmm_eda_results.ele)}
+{format_line("EXCHANGE ENERGY", "EX", self.qmmm_eda_results.ex)}
+{format_line("REPULSION ENERGY", "REP", self.qmmm_eda_results.rep)}
+{format_line("POLARIZATION ENERGY", "POL", self.qmmm_eda_results.pol)}
+{format_line("ELECTRON CORRELATION", "CORR", self.qmmm_eda_results.ec)}
+{format_line("TOTAL INTERACTION ENERGY", "E", self.qmmm_eda_results.tot)}
+ --------------------------------------------------------------------------------"""
 
     def validate_config(self):
         if self.config.charge != sum(self.config.eda_charge):
@@ -799,8 +831,41 @@ class QMMM_EDA:
                 do_qm=False)
 
     def run(self) -> None:
+        module_init_time = time.time()
+        if self.printlevel > 1:
+            print(BC.OKBLUE, BC.BOLD,
+                  "------------PREPARING QM/MM EDA-------------", BC.END)
         self._prepare_theories()
+        if self.printlevel > 1:
+            print_time_rel(module_init_time,
+                           modulename='QM/MM EDA prepare', moduleindex=0)
+        module_init_time = time.time()
         self._run_qmmm()
+        energy_components, qmmm_ele = self.bsse_eda_cal()
+        self._cal_mm_vdw()
+        self._cal_mm_elec()
+        self.qmmm_eda_results.ele = energy_components.eda_components['ES'] + self.mm_elec_interaction + qmmm_ele
+        self.qmmm_eda_results.ex = energy_components.eda_components['EX']
+        self.qmmm_eda_results.rep = energy_components.eda_components['REP']
+        self.qmmm_eda_results.ec = energy_components.eda_components['EC'] + self.vdw_interaction
+        qmmm_energy_total = self.energy_sup.mm_energy + self.eda_obj.hf.tol_energy[0]
+        mono1_energy = self.energy_monomer1.mm_energy + self.eda_obj.hf.tol_energy[1]
+        mono2_energy = self.energy_monomer2.mm_energy + self.eda_obj.hf.tol_energy[2]
+        self.qmmm_eda_results.tot = qmmm_energy_total - mono1_energy - mono2_energy
+        self.qmmm_eda_results.pol = self.qmmm_eda_results.tot - self.qmmm_eda_results.ele - \
+            self.qmmm_eda_results.ex - self.qmmm_eda_results.rep - self.qmmm_eda_results.ec
+        if self.printlevel > 1:
+            print_time_rel(module_init_time,
+                           modulename='QM/MM EDA run', moduleindex=0)   
+        print(self)
+        if self.printlevel >= 1:
+            print()
+            print(BC.OKBLUE, BC.BOLD,
+                  "------------ENDING QM/MM EDA-------------", BC.END)
+
+        
+        
+        
 
     def _run_qmmm(self):
         try:
@@ -820,23 +885,29 @@ class QMMM_EDA:
         )
 
     def _calculate_monomer1_energy(self):
-        theory = self.qmmm_theory1 if self.is_fragment1_mm else self.qm_theory1
-        self.energy_monomer1 = self._calculate_singlepoint(
-            theory=theory,
-            fragment=self.fragment1,
-            charge=self.config.eda_charge[0],
-            mult=self.config.eda_mult[0]
-        )
+        if self.is_fragment1_mm:
+            theory = self.qmmm_theory1
+            
+            self.energy_monomer1 = self._calculate_singlepoint(
+                                    theory=theory,
+                                    fragment=self.fragment1,
+                                    charge=self.config.eda_charge[0],
+                                    mult=self.config.eda_mult[0])
+        else:
+            self.qm_theory1 = None
+            self.energy_monomer1 = ash.ASH_Results(qm_energy=0.0, mm_energy=0.0, energy=0.0)
 
     def _calculate_monomer2_energy(self):
-        theory = self.qmmm_theory2 if self.is_fragment2_mm else self.qm_theory2
-        self.energy_monomer2 = self._calculate_singlepoint(
-            theory=theory,
-            fragment=self.fragment2,
-            charge=self.config.eda_charge[1],
-            mult=self.config.eda_mult[1]
-        )
-
+        if self.is_fragment2_mm:
+            theory = self.qmmm_theory2
+            self.energy_monomer2 = self._calculate_singlepoint(
+                                    theory=theory,
+                                    fragment=self.fragment2,
+                                    charge=self.config.eda_charge[1],
+                                    mult=self.config.eda_mult[1])
+        else:
+            self.qm_theory2 = None
+            self.energy_monomer2 = ash.ASH_Results(qm_energy=0.0, mm_energy=0.0, energy=0.0)
     def _calculate_singlepoint(self, theory, fragment, charge, mult):
         return Singlepoint(
             theory=theory,
@@ -929,14 +1000,13 @@ class QMMM_EDA:
                                basis=self.config.basis, functional=self.config.functional, eda=True,
                                eda_atm=qm_eda_atm, eda_mult=qm_eda_mult)
         
-        energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj,dmeda_eb=True, 
+        energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj,dmeda_eb=True, #crucial parameter
                                                  MM_charges=mm_charges_list, MM_coords=mm_coords_list
                                              )
         d_matrices = self.eda_obj.hf.d_matrix
         self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
-        qmmm_ele = sum(qmmm_ele)
+        qmmm_ele_l = self.eda_obj.hf.ham_list[-1].energy
+        qmmm_ele = qmmm_ele_l[1:-1].sum()
+        #TODO: deal all energy terms
         return energy_components, qmmm_ele
 
-    def cal_qmmm_elec(self):
-
-        raise NotImplementedError("Not impl")

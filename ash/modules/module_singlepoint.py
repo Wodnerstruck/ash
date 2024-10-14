@@ -106,7 +106,7 @@ def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, pri
     '''Energy decomposition analysis function: runs a EDA calculation using ASH theory and ASH fragment.'''
     if printlevel >= 1:
         print_line_with_mainheader("Energy decomposition analysis function")
-
+    module_init_time = time.time()
     if fragment is None or theory is None:
         print(BC.FAIL,"Singlepoint requires a fragment and a theory object",BC.END)
         ashexit()
@@ -126,6 +126,8 @@ def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, pri
             ashexit()
         energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult, 
                             MMcharges=MM_charges, MM_coords=MM_coords)
+    if printlevel >= 1:
+        print_time_rel(module_init_time, modulename='Energy decomposition analysis', moduleindex=1)
     result = ASH_Results(label="Energy decomposition", eda_components=energy, charge=charge, mult=mult)
     return result
     
