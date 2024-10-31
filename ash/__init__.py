@@ -102,6 +102,8 @@ from .interfaces.interface_PyMBE import PyMBETheory
 from .interfaces.interface_MLatom import MLatomTheory
 #add new interface for XEDA
 from .interfaces.interface_XEDA import XEDATheory
+#QMMMEDA
+from .interfaces.QMMMEDA import QMMM_EDA, QMMMConfig, XEDA_EB, QMMMTheory_EDA
 from .interfaces.interface_DRACO import get_draco_radii
 from .interfaces.interface_DFTD4 import DFTD4Theory, calc_DFTD4
 from .interfaces.interface_torch import TorchTheory

@@ -125,7 +125,7 @@ def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, pri
             print(BC.FAIL,"Background charges must be provided for EDA_EB",BC.END)
             ashexit()
         energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult, 
-                            MMcharges=MM_charges, MM_coords=MM_coords)
+                            MMcharges=MM_charges, current_MM_coords=MM_coords, PC=True) # PC should be True
     if printlevel >= 1:
         print_time_rel(module_init_time, modulename='Energy decomposition analysis', moduleindex=1)
     result = ASH_Results(label="Energy decomposition", eda_components=energy, charge=charge, mult=mult)

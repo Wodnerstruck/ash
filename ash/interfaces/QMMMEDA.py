@@ -1,12 +1,14 @@
+from ash.interfaces.interface_XEDA import XEDATheory
+from ash.modules.module_QMMM import QMMMTheory
 from dataclasses import dataclass
-from ash import Fragment, XEDATheory, OpenMMTheory, QMMMTheory, ashexit, Singlepoint, Energy_decomposition
+from ash import Fragment, ashexit, Singlepoint, Energy_decomposition
 import openmm.app as app
 import numpy as np
 import copy
 import time
 import ash.modules.module_coords
 import ash.constants
-from typing import List, Optional
+from typing import List, Optional, Any
 from ash.functions.functions_general import ashexit, BC, blankline, listdiff, print_time_rel, printdebug, print_line_with_mainheader, writelisttofile, print_if_level
 import ash.settings_ash
 from ash.modules.module_QMMM import fullindex_to_qmindex, linkatom_force_fix
@@ -17,17 +19,16 @@ class QMMMConfig:
     numcores: int
     functional: str
     basis: str
-    scf_tpye: str = 'RHF'
-    # qm_theory_full: XEDATheory
     qm_atoms: List[int]
     charge: int
     mult: int
     eda_atm: List[int]
     eda_charge: List[int]
     eda_mult: List[int]
+    scf_type: str = 'RHF'
     pdbfile: Optional[str] = None
     xyzfile: Optional[str] = None
-    forcefield: Optional[str] = None
+    forcefield: Optional[any] = None
     xmlfiles: Optional[List[str]] = None
 
 
@@ -39,6 +40,7 @@ class QMMMEDAterms:
     pol: float = 0.0
     ec: float = 0.0
     tot: float = 0.0
+
 
 class QMMMTheory_EDA(QMMMTheory):
 
@@ -517,7 +519,6 @@ class XEDA_EB(XEDATheory):
                  scf_maxiter=128, eda=False, ct=False, blw=False, eda_atm=None, eda_charge=None, eda_mult=None,
                  bc=None, bc_list=None):
         super().__init__(
-            self,
             numcores=numcores,
             printlevel=printlevel,
             label=label,
@@ -547,11 +548,19 @@ class XEDA_EB(XEDATheory):
             for mm_charges, mm_coords in zip(MMcharges_nd, MM_coords_nd):
                 if mm_charges is not None and mm_coords is not None:
                     chgs.append(np.ravel(np.column_stack(
-                    (mm_charges[:, np.newaxis], mm_coords * ash.constants.ang2bohr))))
+                        (mm_charges[:, np.newaxis], mm_coords * ash.constants.ang2bohr))))
                 else:
                     chgs.append([])
             self.bc = builder.charge_info(self.mol, chgs)
             self.hf.load_ham(self.bc, 1.0, 0.0)
+            #Temp
+            #for i in range(3):
+                #if MMcharges_nd[i] is not None:
+                    #with open(f'charge{i}.dat','w') as file:
+                        #charge_num = len(MMcharges_nd[0])
+                        #file.write(f'{charge_num}\n')
+                        #for mm_coord, mm_charge in zip(MM_coords_nd[i], MMcharges_nd[i]):
+                            #file.write(f'{mm_coord[0]} {mm_coord[1]} {mm_coord[2]} {mm_charge}\n')
 
     def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
             elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
@@ -681,14 +690,14 @@ class QMMM_EDA:
         self.initialize_fragment()
         self.qm_theory_full = XEDATheory(
             numcores=self.config.numcores,
-            scf_type=self.config.scf_tpye,
+            scf_type=self.config.scf_type,
             basis=self.config.basis,
             functional=self.config.functional
         )
-        self.qmmm_eda_results:QMMMEDAterms = QMMMEDAterms()
-        self.mm_elec_interaction:float = 0.0
-        self.vdw_interaction:float = 0.0
-        self.total_interaction:float = 0.0
+        self.qmmm_eda_results: QMMMEDAterms = QMMMEDAterms()
+        self.mm_elec_interaction: float = 0.0
+        self.vdw_interaction: float = 0.0
+        self.total_interaction: float = 0.0
 
     def __repr__(self):
         def format_line(label, abbr, value):
@@ -763,11 +772,12 @@ QM/MM EDA RESULTS
         self.qm_theory2 = copy.deepcopy(self.qm_theory_full)
 
     def _prepare_mm_theories(self):
+        from ash.interfaces.interface_OpenMM import OpenMMTheory
         self.split_fragment(self.config.pdbfile, self.config.eda_atm)
         self.split_qmatms()
 
-        self.is_fragment1_mm = False
-        self.is_fragment2_mm = False
+        self.is_fragment1_mm = True
+        self.is_fragment2_mm = True
         if len(self.qm_atoms1) == self.fragment1.numatoms:
             self.is_fragment1_mm = False
         if len(self.qm_atoms2) == self.fragment2.numatoms:
@@ -856,16 +866,12 @@ QM/MM EDA RESULTS
             self.qmmm_eda_results.ex - self.qmmm_eda_results.rep - self.qmmm_eda_results.ec
         if self.printlevel > 1:
             print_time_rel(module_init_time,
-                           modulename='QM/MM EDA run', moduleindex=0)   
+                           modulename='QM/MM EDA run', moduleindex=0)
         print(self)
         if self.printlevel >= 1:
             print()
             print(BC.OKBLUE, BC.BOLD,
                   "------------ENDING QM/MM EDA-------------", BC.END)
-
-        
-        
-        
 
     def _run_qmmm(self):
         try:
@@ -887,12 +893,12 @@ QM/MM EDA RESULTS
     def _calculate_monomer1_energy(self):
         if self.is_fragment1_mm:
             theory = self.qmmm_theory1
-            
+
             self.energy_monomer1 = self._calculate_singlepoint(
-                                    theory=theory,
-                                    fragment=self.fragment1,
-                                    charge=self.config.eda_charge[0],
-                                    mult=self.config.eda_mult[0])
+                theory=theory,
+                fragment=self.fragment1,
+                charge=self.config.eda_charge[0],
+                mult=self.config.eda_mult[0])
         else:
             self.qm_theory1 = None
             self.energy_monomer1 = ash.ASH_Results(qm_energy=0.0, mm_energy=0.0, energy=0.0)
@@ -901,13 +907,14 @@ QM/MM EDA RESULTS
         if self.is_fragment2_mm:
             theory = self.qmmm_theory2
             self.energy_monomer2 = self._calculate_singlepoint(
-                                    theory=theory,
-                                    fragment=self.fragment2,
-                                    charge=self.config.eda_charge[1],
-                                    mult=self.config.eda_mult[1])
+                theory=theory,
+                fragment=self.fragment2,
+                charge=self.config.eda_charge[1],
+                mult=self.config.eda_mult[1])
         else:
             self.qm_theory2 = None
             self.energy_monomer2 = ash.ASH_Results(qm_energy=0.0, mm_energy=0.0, energy=0.0)
+
     def _calculate_singlepoint(self, theory, fragment, charge, mult):
         return Singlepoint(
             theory=theory,
@@ -959,54 +966,50 @@ QM/MM EDA RESULTS
                 self.mm_novdw1.energy - self.mm_without_nonbonded1.energy) - (self.mm_novdw2.energy - self.mm_without_nonbonded2.energy)
 
     def bsse_eda_cal(self):
-       # QMenergy = self.qm_theory.run(current_coords=used_qmcoords,
-        # current_MM_coords=self.pointchargecoords, MMcharges=self.pointcharges, mm_elems=self.mm_elems_for_qmprogram,
-        # qm_elems=self.current_qmelems, Grad=False, PC=self.PC, numcores=numcores, charge=charge, mult=mult）
         mono1_qm_elems = self.qmmm_theory1.current_qmelems if self.is_fragment1_mm else self.fragment1.elems
         mono2_qm_elems = self.qmmm_theory2.current_qmelems if self.is_fragment2_mm else self.fragment2.elems
         full_qm_elems = self.qmmm_theory_full.current_qmelems
-       
-        if (lm1 := len(mono1_qm_elems)) + (lm2 := len(mono2_qm_elems)) == len(full_qm_elems):
+
+        if (lm1 := len(mono1_qm_elems)) + (lm2 := len(mono2_qm_elems)) != len(full_qm_elems):
             raise RuntimeError("DM_EDA(EB): Monomer QM elements are not consistent with full QM elements!")
         final_qm_elems = mono1_qm_elems + mono2_qm_elems
         qm_eda_atm = [lm1, lm2]
         qm_eda_mult = [self.config.eda_mult[0], self.config.eda_mult[1]]
+        qm_eda_charge = [self.config.eda_charge[0], self.config.eda_charge[1]]
 
         mono1_qm_coords = self.qmmm_theory1.qm_coords if self.is_fragment1_mm else self.fragment1.coords
         mono2_qm_coords = self.qmmm_theory2.qm_coords if self.is_fragment2_mm else self.fragment2.coords
         final_qm_coords = np.concatenate([mono1_qm_coords, mono2_qm_coords], axis=0)
-        
+
         eda_fragment = Fragment(coords=final_qm_coords, elems=final_qm_elems,
                                 charge=self.config.charge, mult=self.config.mult)
-        
+
         mono1_mm_charges = self.qmmm_theory1.pointcharges if self.is_fragment1_mm else None
         mono2_mm_charges = self.qmmm_theory2.pointcharges if self.is_fragment2_mm else None
         full_mm_charges = self.qmmm_theory_full.pointcharges
-        
         len_mono1_mm_charges = len(mono1_mm_charges) if mono1_mm_charges is not None else 0
         len_mono2_mm_charges = len(mono2_mm_charges) if mono2_mm_charges is not None else 0
-        if len_mono1_mm_charges + len_mono2_mm_charges == len(full_mm_charges):
+        if len_mono1_mm_charges + len_mono2_mm_charges != len(full_mm_charges):
             raise RuntimeError("DM_EDA(EB): Monomer MM charges are not consistent with full MM charges!")
-        
+
         mm_charges_list = [full_mm_charges, mono1_mm_charges, mono2_mm_charges]
-        
-        mono1_mm_coords = self.qmmm_theory1.pointchargecoords if self.is_fragment1_mm else None 
+
+        mono1_mm_coords = self.qmmm_theory1.pointchargecoords if self.is_fragment1_mm else None
         mono2_mm_coords = self.qmmm_theory2.pointchargecoords if self.is_fragment2_mm else None
         full_mm_coords = self.qmmm_theory_full.pointchargecoords
-        
+
         mm_coords_list = [full_mm_coords, mono1_mm_coords, mono2_mm_coords]
-        
-        self.eda_obj = XEDA_EB(numcores=self.config.numcores, label='xeda_eb', scf_type=self.config.scf_tpye, 
+
+        self.eda_obj = XEDA_EB(numcores=self.config.numcores, label='xeda_eb', scf_type=self.config.scf_type,
                                basis=self.config.basis, functional=self.config.functional, eda=True,
-                               eda_atm=qm_eda_atm, eda_mult=qm_eda_mult)
-        
-        energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj,dmeda_eb=True, #crucial parameter
+                               eda_atm=qm_eda_atm, eda_charge=qm_eda_charge, eda_mult=qm_eda_mult)
+
+        energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj, dmeda_eb=True,  # crucial parameter
                                                  MM_charges=mm_charges_list, MM_coords=mm_coords_list
-                                             )
+                                                 )
         d_matrices = self.eda_obj.hf.d_matrix
         self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
         qmmm_ele_l = self.eda_obj.hf.ham_list[-1].energy
         qmmm_ele = qmmm_ele_l[1:-1].sum()
-        #TODO: deal all energy terms
+        # TODO: deal all energy terms
         return energy_components, qmmm_ele
-
