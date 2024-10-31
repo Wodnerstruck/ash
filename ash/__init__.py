@@ -66,7 +66,8 @@ from .modules.module_spinprojection import SpinProjectionTheory
 from .modules.module_hybridtheory import DualTheory,WrapTheory
 #ONIOM
 from .modules.module_oniom import ONIOMTheory
-
+#QMMMEDA
+from .modules.module_QMMMEDA import QMMM_EDA, QMMMConfig, XEDA_EB, QMMMTheory_EDA
 # Surface
 from .modules.module_surface import calc_surface, calc_surface_fromXYZ, read_surfacedict_from_file, write_surfacedict_to_file
 
@@ -102,8 +103,6 @@ from .interfaces.interface_PyMBE import PyMBETheory
 from .interfaces.interface_MLatom import MLatomTheory
 #add new interface for XEDA
 from .interfaces.interface_XEDA import XEDATheory
-#QMMMEDA
-from .interfaces.QMMMEDA import QMMM_EDA, QMMMConfig, XEDA_EB, QMMMTheory_EDA
 from .interfaces.interface_DRACO import get_draco_radii
 from .interfaces.interface_DFTD4 import DFTD4Theory, calc_DFTD4
 from .interfaces.interface_torch import TorchTheory
