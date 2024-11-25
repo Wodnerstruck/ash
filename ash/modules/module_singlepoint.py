@@ -15,7 +15,6 @@ from ash.functions.functions_general import ashexit, BC,print_time_rel,print_lin
 from ash.modules.module_coords import check_charge_mult
 from ash.modules.module_results import ASH_Results
 
-
 # Single-point energy function
 def Singlepoint_gradient(fragment=None, theory=None, charge=None, mult=None):
     result = Singlepoint(fragment=fragment, theory=theory, Grad=True, charge=charge, mult=mult)
@@ -101,31 +100,39 @@ def Singlepoint(fragment=None, theory=None, Grad=False, charge=None, mult=None, 
         return result
 
 #Energy decomposition
-def Energy_decomposition(fragment=None, theory=None, charge=None, mult=None, printlevel=2,
-                         dmeda_eb=False, MM_charges: Optional[List]=None, MM_coords: Optional[List]=None):
+
+
+def Energy_decomposition(fragment:Optional[ash.Fragment] = None,
+                         theory=None,
+                         charge=None,
+                         mult=None,
+                         printlevel=2,
+                         dmeda_eb=False,
+                         MM_charges: Optional[List] = None,
+                         MM_coords: Optional[List] = None):
     '''Energy decomposition analysis function: runs a EDA calculation using ASH theory and ASH fragment.'''
     if printlevel >= 1:
         print_line_with_mainheader("Energy decomposition analysis function")
     module_init_time = time.time()
     if fragment is None or theory is None:
-        print(BC.FAIL,"Singlepoint requires a fragment and a theory object",BC.END)
+        print(BC.FAIL, "Singlepoint requires a fragment and a theory object", BC.END)
         ashexit()
-    coords=fragment.coords
-    elems=fragment.elems 
-       
+    coords = fragment.coords
+    elems = fragment.elems
+
     charge, mult = check_charge_mult(charge, mult, theory.theorytype, fragment, "EDA", theory=theory)
     if printlevel >= 1:
         print()
-        print("Doing energy decomposition on fragment. Formula: {} Label: {} ".format(fragment.prettyformula,fragment.label))
+        print("Doing energy decomposition on fragment. Formula: {} Label: {} ".format(fragment.prettyformula, fragment.label))
         print(f"Charge: {charge} Mult: {mult}")
-    if dmeda_eb is False:    
+    if dmeda_eb is False:
         energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult)
     else:
         if MM_charges is None:
-            print(BC.FAIL,"Background charges must be provided for EDA_EB",BC.END)
+            print(BC.FAIL, "Background charges must be provided for EDA_EB", BC.END)
             ashexit()
-        energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult, 
-                            MMcharges=MM_charges, current_MM_coords=MM_coords, PC=True) # PC should be True
+        energy = theory.run(current_coords=coords, elems=elems, charge=charge, mult=mult,
+                            MMcharges=MM_charges, current_MM_coords=MM_coords, PC=True)  # PC should be True
     if printlevel >= 1:
         print_time_rel(module_init_time, modulename='Energy decomposition analysis', moduleindex=1)
     result = ASH_Results(label="Energy decomposition", eda_components=energy, charge=charge, mult=mult)

@@ -23,7 +23,7 @@ from typing import List, Optional
 class XEDATheory:
     def __init__(self, numcores=1, printlevel=2, label='xeda',
                  scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, 
-                 scf_maxiter=128, eda=False, ct=False, blw=False, eda_atm:Optional[List]=None, 
+                 scf_maxiter=128, eda=False, ct=False, blw=False, real_space=False, eda_atm:Optional[List]=None, 
                  eda_charge:Optional[List]=None, eda_mult:Optional[List]=None, bc=None):
         # self.analytic_gradient = False
         # self.analytic_hessian = False
@@ -68,10 +68,16 @@ class XEDATheory:
         self.eda = eda
         self.blw = blw
         self.ct = ct
-        if not eda and (eda_atm is not None or eda_charge is not None or eda_mult is not None):
-            raise ValueError(
-                "You have set eda to False but provided eda_atm, eda_charge or eda_mult. Please set eda to True or remove these keywords.")
-        if eda:
+        
+        if not eda: 
+            if (eda_atm is not None or eda_charge is not None or eda_mult is not None):
+                raise ValueError(
+                    "You have set eda to False but provided eda_atm, eda_charge or eda_mult. Please set eda to True or remove these keywords.")
+            if real_space is True:
+                raise ValueError(
+                    "You have set eda to False but set real_space to True. real_space option requires eda=True."
+                )
+        if eda is True:
             if eda_atm is None or eda_charge is None or eda_mult is None:
                 raise ValueError(
                     "You have set eda to True but did not provide eda_atm, eda_charge or eda_mult. Please set eda to False or provide these keywords.")
@@ -80,6 +86,7 @@ class XEDATheory:
                     "You have provided eda_atm, eda_charge and eda_mult but they are not the same length. Please check.")
 
             self.eda_atm, self.eda_charge, self.eda_mult = eda_atm, eda_charge, eda_mult
+            self.real_space = real_space
 
         self.numcores = numcores
         # print the options
@@ -152,7 +159,7 @@ class XEDATheory:
 
     def run_EDA(self):
         if self.printlevel >= 1:
-            print("\nrun_DM-EDA")
+            print("\nrun DM-EDA")
         module_init_time = time.time()
         import pyxm.eda as eda
         if self.functional is not None:
@@ -160,11 +167,19 @@ class XEDATheory:
         else:
             self.eda_obj = eda.eda_info(self.mol)
 
-        self.eda_obj.do_eda(self.hf.tol_energy, self.hf.d_matrix)
-        # self.eda_obj.do_eda_atomic(self.hf.d_matrix, None)
-        self.eda_obj.show()
+        if self.real_space is False:
+            self.eda_obj.do_eda(self.hf.tol_energy, self.hf.d_matrix)
+            # self.eda_obj.do_eda_atomic(self.hf.d_matrix, None)
+            self.eda_obj.show()
+        else:
+            print("\n DM-EDA(RS)")
+            self.cube = self.eda_obj.do_eda_rs3d(self.hf.d_matrix)
+            print("\n Cube generation")
+            self.cube.out_cub_all()
         print_time_rel(module_init_time, modulename='XEDA run_EDA',
                        moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
+        if hasattr(self, 'cube'):
+            return {'ES': 0.0, 'EX': 0.0, 'REP': 0.0, 'POL': 0.0, 'EC': 0.0, 'TOL': 0.0}
         if self.ct is not True:
             energy_components = {'ES': self.eda_obj.ES, 'EX': self.eda_obj.EX, 'REP': self.eda_obj.REP, 
                                  'POL': self.eda_obj.POL, 'EC': self.eda_obj.EC, 'TOL': self.eda_obj.TOL}
