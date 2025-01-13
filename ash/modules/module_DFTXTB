@@ -1,0 +1,135 @@
+import copy
+import time
+import numpy as np
+import math
+
+import ash.modules.module_coords
+from ash.modules.module_coords import Fragment, write_pdbfile
+from ash.functions.functions_general import ashexit, BC, blankline, listdiff, print_time_rel, printdebug, print_line_with_mainheader, writelisttofile, print_if_level
+import ash.settings_ash
+from typing import List, Optional
+# from ash.modules.module_MM import coulombcharge
+
+
+class DFTxTBTheory:
+    def __init__(self, qm_theory=None, hlatoms=None, fragment: Optional[Fragment] = None, xtbtheory=None, charges=None,
+                 printlevel=2, numcores=1, actatoms=None, usualboundary=False, hl_charge=None, hl_mult=None):
+        module_init_time = time.time()
+        timeA = time.time()
+        print_line_with_mainheader("DFT/xTB")
+
+        if qm_theory is None or hlatoms is None:
+            print("Error: qm_theory and hlatoms must be defined")
+            ashexit()
+        if fragment is None:
+            print("Error: fragment must be defined")
+            ashexit()
+
+        # Defining charge/mult of High Level Theory
+        self.hl_charge = hl_charge
+        self.hl_mult = hl_mult
+
+        self.theorytype = "DFT/xTB"
+
+        self.linkatoms = False
+
+        self.printlevel = printlevel
+        self.qm_theory = qm_theory
+        self.xtbtheory = xtbtheory
+        self.qm_theory_name = self.qm_theory.__class__.__name__
+        self.xtbtheory_name = self.xtbtheory.__class__.__name__
+
+        print("QM Theory: ", self.qm_theory_name)
+        print("xTB Theory: ", self.xtbtheory_name)
+
+        self.fragment = fragment
+        self.coords = fragment.coords
+        self.elems = fragment.elems
+        self.connectivity = fragment.connectivity
+
+        # Region definations
+        self.allatoms = list(range(0, len(self.elems)))
+        print("All atoms in fragment: ", len(self.allatoms))
+        self.num_allatoms = len(self.allatoms)
+        self.hlatoms = sorted(hlatoms)
+
+        if len(self.hlatoms) == 0:
+            print("Error: List of High Level Atoms is empty")
+            ashexit()
+
+        self.llatoms = np.setdiff1d(self.allatoms, self.hlatoms)
+
+        self.PC = True
+
+        print("Embedding: elstat")
+
+        self.chargeshifting_done = False
+        
+        conn_scale = ash.settings_ash.settings_dict["scale"]
+        conn_tolerance = ash.settings_ash.settings_dict["tol"]+0.2
+        
+        print("DFT-region coordinates (before linkatoms): ")
+        ash.modules.module_coords.print_coords_for_atoms(self.coords, self.elems, self.hlatoms, labels=self.hlatoms)
+        
+        self.boundaryatoms = ash.modules.module_coords.get_boundary_atoms(self.hlatoms, self.coords, self.elems, conn_scale, conn_tolerance)
+        
+        if len(self.boundaryatoms) > 0:
+            print("Found covalent boundary. Link atoms option set to True")
+            print("Boundary atoms(HL:LL pairs): ", self.boundaryatoms)
+            print("Note: used connectivity settings, scale={} and tol={} to determine boundary.".format(conn_scale,conn_tolerance))
+            self.linkatoms = True
+            #self.get_MMboundary(conn_scale, conn_tolerance)
+        else:
+            print("No covalent boundary found. Linkatoms option set to False")
+            self.linkatoms = False
+        
+    def ShiftMMCharges(self):
+        if self.chargeshifting_done is False:
+            self.ShiftMMCharges_new2()
+        else:
+            print("Charge shifting already done. Using previous charges")       
+
+    def get_MMboundary(self,scale,tol):
+        timeA=time.time()
+        # if boundarydict is not empty we need to zero MM1 charge and distribute charge from MM1 atom to MM2,MM3,MM4
+        #Creating dictionary for each MM1 atom and its connected atoms: MM2-4
+        self.MMboundarydict={}
+        for (QM1atom,MM1atom) in self.boundaryatoms.items():
+            connatoms = ash.modules.module_coords.get_connected_atoms(self.coords, self.elems, scale,tol, MM1atom)
+            #Deleting QM-atom from connatoms list
+            connatoms.remove(QM1atom)
+            self.MMboundarydict[MM1atom] = connatoms
+
+        # Used by ShiftMMCharges
+        self.MMboundary_indices = list(self.MMboundarydict.keys())
+        self.MMboundary_counts = np.array([len(self.MMboundarydict[i]) for i in self.MMboundary_indices])
+
+        print("")
+        print("MM boundary (MM1:MMx pairs):", self.MMboundarydict)
+        print_time_rel(timeA, modulename="get_MMboundary")
+    def ShiftMMCharges_new2(self):
+        timeA=time.time()
+        if self.printlevel > 1:
+            print("new. Shifting MM charges at QM-MM boundary.")
+
+        # Convert lists to NumPy arrays for faster computations
+        print_time_rel(timeA, modulename="x0", currprintlevel=self.printlevel, currthreshold=1)
+        self.pointcharges = np.array(self.charges_qmregionzeroed)
+        self.charges=np.array(self.charges)
+
+        print_time_rel(timeA, modulename="x1", currprintlevel=self.printlevel, currthreshold=1)
+        # Extract charges for MM boundary atoms
+        MM1_charges = self.charges[self.MMboundary_indices]
+        # Set charges of MM boundary atoms to 0
+        self.pointcharges[self.MMboundary_indices] = 0.0
+
+        # Calculate charge fractions to distribute
+        MM1charge_fract = MM1_charges / self.MMboundary_counts
+
+        # Distribute charge fractions to neighboring MM atoms
+        for indices, fract in zip(self.MMboundarydict.values(), MM1charge_fract):
+            self.pointcharges[[indices]] += fract
+
+        self.chargeshifting_done=True
+        print_time_rel(timeA, modulename="ShiftMMCharges-new2", currprintlevel=self.printlevel, currthreshold=1)
+        return            
