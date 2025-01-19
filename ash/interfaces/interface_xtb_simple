@@ -1,0 +1,69 @@
+import os
+import shutil
+import numpy as np
+import subprocess as sp
+import time
+
+import ash.constants
+import ash.settings_solvation
+import ash.settings_ash
+from ash.functions.functions_general import ashexit, blankline,reverse_lines, print_time_rel,BC, print_line_with_mainheader,print_if_level
+import ash.modules.module_coords
+from ash.modules.module_coords import elemstonuccharges, check_multiplicity, check_charge_mult
+
+
+class xTBTheory_simple:
+    
+    def __init__(self, xtbdir=None, xtbmethod='GFN1', runmode='inputfile', numcores=1, printlevel=2, filename='xtb_', maxiter=500, eletronic_temp=300, label=None, accuracy=0.1, hardness_PC=1000, solvent=None):
+        self.theorynamelabel="xTB"
+        self.theorytype = "QM"
+        
+        self.hardness=hardness_PC    
+        self.accuracy=accuracy
+        self.printlevel=printlevel
+        
+        self.label=label #label to distinguish different xtb objects
+        self.filename=filename
+        self.numcores=numcores
+        self.xtbmethod=xtbmethod
+        self.maxiter=maxiter
+        self.runmode=runmode
+        self.electronic_temp=eletronic_temp
+        
+        print_line_with_mainheader("xTB INTERFACE SPECIFIC VERSION")
+        print("Runmode", self.runmode)
+        print("Method", self.xtbmethod)
+        print("xTB object numcores", self.numcores)
+        os.environ['OMP_NUM_THREADS'] = str(self.numcores)  
+        
+        if xtbdir is None:
+            print(BC.WARNING, "No xtbdir argument passed to xTBTheory. Attempting to find xtbdir variable inside settings_ash", BC.END)
+            try:
+                print("settings_ash.settings_dict:", ash.settings_ash.settings_dict)
+                self.xtbdir=ash.settings_ash.settings_dict["xtbdir"]
+            except:
+                print(BC.WARNING,"Found no xtbdir variable in ash.settings_ash module either.",BC.END)
+                try:
+                    self.xtbdir = os.path.dirname(shutil.which('xtb'))
+                    print(BC.OKGREEN,"Found xtb in path. Setting xtbdir to:", self.xtbdir, BC.END)
+                except:
+                    print("Found no xtb executable in path. Exiting... ")
+                    ashexit()
+        else:
+            self.xtbdir = xtbdir
+    
+    def set_numcores(self, numcores):
+        self.numcores=numcores
+        
+    def cleanup(self):
+        if self.printlevel >= 2:
+            print("Cleaning up old xTB files")
+        files=[self.filename + '.xyz',self.filename + '.out','xtbopt.xyz','xtbopt.log','xtbrestart','molden.input','charges','pcgrad','wbo','xtbinput','pcharge','xtbtopo.mol']
+
+        for file in files:
+            try:
+                os.remove(file)
+            except:
+                pass
+
+

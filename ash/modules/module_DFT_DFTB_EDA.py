@@ -102,7 +102,7 @@ class DFT_DFTB():
 
     def split_hlatms(self):
         split_point = self.config.eda_atm[0]
-        self.qm_atoms1 = list(filter(lambda x: x < split_point, self.config.hl_atoms))
-        self.qm_atoms2 = list(map(lambda x: x - split_point, filter(lambda x: x >= split_point, self.config.hl_atoms))) 
+        self.hl_atoms1 = list(filter(lambda x: x < split_point, self.config.hl_atoms))
+        self.hl_atoms2 = list(map(lambda x: x - split_point, filter(lambda x: x >= split_point, self.config.hl_atoms))) 
         
     

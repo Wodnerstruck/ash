@@ -132,4 +132,43 @@ class DFTxTBTheory:
 
         self.chargeshifting_done=True
         print_time_rel(timeA, modulename="ShiftMMCharges-new2", currprintlevel=self.printlevel, currthreshold=1)
-        return            
+        return   
+    
+    def ZeroQMCharges(self):
+        timeA=time.time()
+        print("Setting QM charges to Zero")
+        # Looping over charges and setting QM atoms to zero
+        # 1. Copy charges to charges_qmregionzeroed
+        self.charges_qmregionzeroed=copy.copy(self.charges)
+        # 2. change charge for QM-atom
+        for i, c in enumerate(self.charges_qmregionzeroed):
+            # Setting QMatom charge to 0
+            if i in self.hlatoms:
+                self.charges_qmregionzeroed[i] = 0.0
+        # 3. Flag that this has been done
+        self.QMChargesZeroed = True
+        print_time_rel(timeA, modulename="ZeroQMCharges")
+             
+    def set_numcores(self, numcores):
+        print(f"Setting new numcores {numcores}")
+        self.qm_theory.set_numcores(numcores)
+        self.xtbtheory.set_numcores(numcores)
+        
+    def run(self):
+        raise NotImplementedError("run() method must be implemented in derived class")
+    
+    def create_linkatoms(self, current_coords):
+        checkpoint = time.time()
+        self.linkatoms_dict = ash.modules.module_coords.get_linkatom_positions(self.boundaryatoms, self.hlatoms, current_coords, self.elems)
+        printdebug("linkatoms_dict: ", self.linkatoms_dict)
+        if self.printlevel > 1:
+            print("Adding linkatom positions to HL coordinates")
+            
+        self.linkatoms_indices = [len(self.qmatoms)+i for i in range(0,len(self.linkatoms_dict))]
+        
+        self.num_linkatoms = len(self.linkatoms_indices)
+        linkatoms_coords = [self.linkatoms_dict[pair] for pair in sorted(self.linkatoms_dict.keys())]
+        
+        print_time_rel(checkpoint, modulename="create_linkatoms", moduleindex=3, currprintlevel=self.printlevel, currthreshold=2)
+        return linkatoms_coords
+        
