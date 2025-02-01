@@ -1,0 +1,101 @@
+@startuml classes_QMMMEDA
+set namespaceSeparator none
+class "QMMMConfig" as ash.modules.module_QMMMEDA.QMMMConfig {
+  basis : str
+  charge : int
+  eda_atm : List[int]
+  eda_charge : List[int]
+  eda_mult : List[int]
+  forcefield : Optional[any]
+  functional : str
+  mult : int
+  numcores : int
+  pdbfile : Optional[str]
+  qm_atoms : List[int]
+  scf_type : str
+  xmlfiles : Optional[List[str]]
+  xyzfile : Optional[str]
+}
+class "QMMMEDAterms" as ash.modules.module_QMMMEDA.QMMMEDAterms {
+  ec : float
+  ele : float
+  ex : float
+  pol : float
+  rep : float
+  tot : float
+}
+class "QMMMTheory_EDA" as ash.modules.module_QMMMEDA.QMMMTheory_EDA {
+  MMenergy : int
+  MMgradient
+  PCgradient : ndarray
+  QM_MM_energy
+  QM_MM_gradient
+  QMenergy : float
+  QMgradient : ndarray
+  QMgradient_wo_linkatoms : ndarray
+  do_qm : bool
+  extforce_energy
+  linkatoms : bool
+  pointchargecoords : ndarray
+  qm_coords : ndarray
+  runcalls
+  truncPC_E_correction
+  elstat_run(...)
+}
+class "QMMM_EDA" as ash.modules.module_QMMMEDA.QMMM_EDA {
+  config
+  eda_obj
+  energy_monomer1 : ASH_Results
+  energy_monomer2 : ASH_Results
+  energy_sup : ASH_Results
+  fragment1 : Fragment
+  fragment2 : Fragment
+  full_fragment : Fragment
+  is_fragment1_mm : bool
+  is_fragment2_mm : bool
+  mm_elec_interaction : float
+  mm_novdw1 : ASH_Results
+  mm_novdw2 : ASH_Results
+  mm_novdw_full : ASH_Results
+  mm_theory1 : NoneType, OpenMMTheory
+  mm_theory2 : NoneType, OpenMMTheory
+  mm_theory_full : OpenMMTheory
+  mm_without_nonbonded1 : ASH_Results
+  mm_without_nonbonded2 : ASH_Results
+  mm_without_nonbonded_full : ASH_Results
+  pdbfile1 : str
+  pdbfile2 : str
+  printlevel : int
+  qm_atoms1 : list
+  qm_atoms2 : list
+  qm_theory1 : NoneType, XEDATheory
+  qm_theory2 : NoneType, XEDATheory
+  qm_theory_full : XEDATheory
+  qmmm_eda_results
+  qmmm_theory1
+  qmmm_theory2
+  qmmm_theory_full
+  total_interaction : float
+  vdw_interaction : float
+  bsse_eda_cal()
+  initialize_fragment()
+  run() -> None
+  split_fragment(pdbfile, split_indices: List[int])
+  split_qmatms()
+  validate_config()
+}
+class "XEDA_EB" as ash.modules.module_QMMMEDA.XEDA_EB {
+  bc : charge_info
+  bc_list : NoneType
+  energy
+  prepare_run(...)
+  run(...)
+  set_embedding_options(...)
+}
+ash.modules.module_QMMMEDA.QMMMEDAterms --* ash.modules.module_QMMMEDA.QMMM_EDA : qmmm_eda_results
+ash.modules.module_QMMMEDA.QMMMTheory_EDA --* ash.modules.module_QMMMEDA.QMMM_EDA : qmmm_theory_full
+ash.modules.module_QMMMEDA.QMMMTheory_EDA --* ash.modules.module_QMMMEDA.QMMM_EDA : qmmm_theory1
+ash.modules.module_QMMMEDA.QMMMTheory_EDA --* ash.modules.module_QMMMEDA.QMMM_EDA : qmmm_theory2
+ash.modules.module_QMMMEDA.XEDA_EB --* ash.modules.module_QMMMEDA.QMMM_EDA : eda_obj
+ash.modules.module_QMMMEDA.QMMMConfig --o ash.modules.module_QMMMEDA.QMMM_EDA : config
+@enduml

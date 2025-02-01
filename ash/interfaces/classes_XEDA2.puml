@@ -1,0 +1,48 @@
+@startuml
+
+skinparam dpi 300
+
+skinparam classAttributeIconSize 0
+skinparam classFontName Arial
+skinparam classFontSize 10
+skinparam classBackgroundColor White
+skinparam classBorderColor Black
+skinparam classArrowColor Black
+skinparam stereotypeCBackgroundColor White
+skinparam stereotypeCBorderColor Black
+
+class XEDATheory {
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+    <tr><td bgcolor="#FAFAFA"><b>Properties</b></td><td bgcolor="#FAFAFA"><b>Methods</b></td></tr>
+    <tr><td align="left" valign="top">
+    theorynamelabel: str<br/>
+    theorytype: str<br/>
+    printlevel: int<br/>
+    properties: dict<br/>
+    label: str<br/>
+    scf_type: str<br/>
+    basis: str<br/>
+    functional: str<br/>
+    scf_maxiter: int<br/>
+    eda: bool<br/>
+    blw: bool<br/>
+    ct: bool<br/>
+    numcores: int
+    </td>
+    <td align="left" valign="top">
+    __init__(...)<br/>
+    set_numcores(numcores: int)<br/>
+    set_DFT_options()<br/>
+    set_embedding_options(...)<br/>
+    create_mol(...)<br/>
+    run_SCF(): float<br/>
+    run_EDA(): dict<br/>
+    run_BLW()<br/>
+    run(...)<br/>
+    prepare_run(...)<br/>
+    actualrun(...)
+    </td></tr>
+    </table>
+}
+
+@enduml

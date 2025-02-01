@@ -40,7 +40,7 @@ class DMEBEDAterms:
     tot: float = 0.0
 
 
-class DFT_DFTB():
+class DFTxTB_EDA():
     def __init__(self, config: DMEBConfig, printlevel=2):
         self.config = config
         self.printlevel = printlevel

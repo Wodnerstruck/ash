@@ -3,7 +3,6 @@ import shutil
 import numpy as np
 import subprocess as sp
 import time
-
 import ash.constants
 import ash.settings_solvation
 import ash.settings_ash

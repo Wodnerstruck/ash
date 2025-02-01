@@ -1,0 +1,35 @@
+
+@startuml
+skinparam dpi 300
+skinparam classAttributeIconSize 0
+skinparam classFontName Arial
+skinparam classFontSize 10
+skinparam classBackgroundColor White
+skinparam classBorderColor Black
+skinparam classArrowColor Black
+skinparam stereotypeCBackgroundColor White
+skinparam stereotypeCBorderColor Black
+
+class XEDATheory {
+  - scf_type: str
+  - basis: str
+  - functional: str
+  - scf_maxiter: int
+  - eda: bool
+  - real_space: bool
+  - numcores: int
+  - ...
+  --
+  + __init__(...)
+  + set_numcores(numcores: int)
+  + set_DFT_options()
+  + set_embedding_options(...)
+  + create_mol(...)
+  + run_SCF(): float
+  + run_EDA(): dict
+  + run(...)
+  + prepare_run(...)
+  + acrualrun(...)
+}
+
+@enduml
