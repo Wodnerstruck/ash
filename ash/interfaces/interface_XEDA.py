@@ -24,7 +24,7 @@ class XEDATheory:
     def __init__(self, numcores=1, printlevel=2, label='xeda',
                  scf_type=None, basis=None, basis_file=None, ecp=None, functional=None, 
                  scf_maxiter=128, eda=False, ct=False, blw=False, real_space=False, eda_atm:Optional[List]=None, 
-                 eda_charge:Optional[List]=None, eda_mult:Optional[List]=None, bc=None):
+                 eda_charge:Optional[List]=None, eda_mult:Optional[List]=None, eda_type="normal" , bc=None):
         # self.analytic_gradient = False
         # self.analytic_hessian = False
         self.theorynamelabel = "XEDA"
@@ -66,6 +66,7 @@ class XEDATheory:
         self.bc = bc
         # EDA
         self.eda = eda
+        self.eda_type = eda_type
         self.blw = blw
         self.ct = ct
         
@@ -108,15 +109,14 @@ class XEDATheory:
         # mole.xscf_world.set_thread_num(numcores)
 
     def set_DFT_options(self):
-        import pyxm.scf as scf
+        import wards.scf as scf
         self.hf = scf.scf_info(self.mol)
-        self.hf.init_hf()
-        self.hf.init_guess_sad()
+        self.hf.init_guess()
         if self.blw is not True:
             if self.functional is not None:
                 self.hf.load_dft(self.functional)
     
-    def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None ):
+    def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None):
         if PC is True:
             import pyxm.builder as builder
             # QM/MM pointcharge embedding
@@ -131,7 +131,7 @@ class XEDATheory:
     def create_mol(self, qm_elems, current_coords, charge, mult):
         if self.printlevel >= 1:
             print("Creating mol object")
-        import pyxm.mole as mole
+        import wards.mole as mole
         if self.eda is False:
             coords_string = ash.modules.module_coords.create_coords_string_xscf(
                 qm_elems, current_coords)
@@ -147,9 +147,9 @@ class XEDATheory:
             print("\nrun_SCF")
         module_init_time = time.time()
         if self.scf_type == 'RHF' or self.scf_type == 'RKS':
-            self.hf.do_scf()
+            self.hf.kernel("r", max_iter=self.scf_maxiter)
         elif self.scf_type == 'UHF' or self.scf_type == 'UKS':
-            self.hf.do_scf("u")
+            self.hf.do_scf("u", max_iter=self.scf_maxiter)
         elif self.scf_type == 'ROHF' or self.scf_type == 'ROKS':
             raise NotImplementedError(
                 "ROHF/ROKS functionality is not yet implemented.")
@@ -161,16 +161,14 @@ class XEDATheory:
         if self.printlevel >= 1:
             print("\nrun DM-EDA")
         module_init_time = time.time()
-        import pyxm.eda as eda
-        if self.functional is not None:
-            self.eda_obj = eda.eda_info(self.mol, dft=self.functional)
-        else:
-            self.eda_obj = eda.eda_info(self.mol)
+        import wards.eda as eda
+        self.eda_obj = eda.eda_info(self.mol)
 
         if self.real_space is False:
-            self.eda_obj.do_eda(self.hf.tol_energy, self.hf.d_matrix)
-            # self.eda_obj.do_eda_atomic(self.hf.d_matrix, None)
-            self.eda_obj.show()
+            if self.eda_type == "normal": 
+                eda_res = self.eda_obj.do_eda4scf(self.hf, type='normal')
+            elif self.eda_type == "atomic":
+                self.eda_obj.do_eda4scf(self.hf, type='atomic')
         else:
             print("\n DM-EDA(RS)")
             self.cube = self.eda_obj.do_eda_rs3d(self.hf.d_matrix)
@@ -181,21 +179,14 @@ class XEDATheory:
         if hasattr(self, 'cube'):
             return {'ES': 0.0, 'EX': 0.0, 'REP': 0.0, 'POL': 0.0, 'EC': 0.0, 'TOL': 0.0}
         if self.ct is not True:
-            energy_components = {'ES': self.eda_obj.ES, 'EX': self.eda_obj.EX, 'REP': self.eda_obj.REP, 
-                                 'POL': self.eda_obj.POL, 'EC': self.eda_obj.EC, 'TOL': self.eda_obj.TOL}
+            energy_components = {'ES': eda_res[0], 'EX': eda_res[1], 'REP': eda_res[2], 
+                                 'POL': eda_res[3], 'EC': eda_res[4], 'TOL': eda_res[5]}
             return energy_components
         else:
             raise NotImplementedError(
                 "Charge-transfer functionality is not yet implemented.")
 
-    def run_BLW(self):
-        if self.printlevel >= 1:
-            print("\nrun_BLW")
-        module_init_time = time.time()
-        self.blw_obj.do_eda()
-        print_time_rel(module_init_time, modulename='XEDA run_BLW',
-                       moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
-        raise NotImplementedError("BLW functionality is not yet implemented.")
+
 
     def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None,
             elems=None, Grad=False, PC=False, numcores=None, pe=False, potfile=None, restart=False, label=None,
@@ -219,9 +210,11 @@ class XEDATheory:
                   "------------PREPARING XEDA INTERFACE-------------", BC.END)
             print("Object-label:", self.label)
             print("Run-label:", label)
-
-            import pyxm.mole as mole
-            mole.xscf_world.set_thread_num(self.numcores)
+            
+            from wards import xscf_world
+            #import pyxm.mole as mole
+            
+            xscf_world.set_thread_num(self.numcores)
 
             if self.printlevel > 1:
                 print("Number of XEDA  threads is:", self.numcores)
