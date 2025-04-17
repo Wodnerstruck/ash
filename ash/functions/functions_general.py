@@ -715,7 +715,7 @@ def print_time_tot_color(time_initial, modulename='Unknown', moduleindex=4):
     mins = secs / 60
     # hoursB=minsB/60
     print(BC.WARNING, "-------------------------------------------------------------------", BC.END)
-    print(BC.WARNING, "ASH Total Walltime: {:3.1f} seconds, {:3.1f} minutes.".format(secs, mins), BC.END)
+    print(BC.WARNING, "Total Walltime: {:3.1f} seconds, {:3.1f} minutes.".format(secs, mins), BC.END)
     print(BC.WARNING, "-------------------------------------------------------------------", BC.END)
     # Adding time to Timings object
     timingsobject.add(modulename, secs, moduleindex=moduleindex)

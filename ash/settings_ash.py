@@ -25,13 +25,13 @@ settings_dict["load_julia"] = False
 settings_dict["julia_library"] = "pythoncall" #pythoncall is default. pyjulia was another option (not recommended)
 
 # Whether to use ANSI color escape sequences in output or not.
-settings_dict["use_ANSI_color"] = True
+settings_dict["use_ANSI_color"] = False
 
 # Print logo or not
 settings_dict["print_logo"] = False
 
 # Print inputfile or not in beginning of job
-settings_dict["print_input"] = True
+settings_dict["print_input"] = False
 
 # Global Connectivity settings
 settings_dict["scale"] = 1.0

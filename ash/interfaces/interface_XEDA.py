@@ -118,14 +118,15 @@ class XEDATheory:
     
     def set_embedding_options(self, PC=False, MM_coords=None, MMcharges=None):
         if PC is True:
-            import pyxm.builder as builder
+            import wards.ham as ham
             # QM/MM pointcharge embedding
             print("PC True. Adding pointcharges")
             MMcharges = np.array(MMcharges)
             MM_coords = np.array(MM_coords)
-            self.bc = builder.charge_info(self.mol, [np.ravel(np.column_stack(
-                (MMcharges[:, np.newaxis], MM_coords * ash.constants.ang2bohr)))])
-            self.hf.load_ham(self.bc, 1.0, 0.0)
+            self.bc = ham.ham_bgcharge_info(self.mol, [np.column_stack(
+                (MMcharges[:, np.newaxis], MM_coords * ash.constants.ang2bohr))])
+            
+            self.hf.register_ham(self.bc, 0.0, 1.0)
 
 
     def create_mol(self, qm_elems, current_coords, charge, mult):
@@ -149,13 +150,13 @@ class XEDATheory:
         if self.scf_type == 'RHF' or self.scf_type == 'RKS':
             self.hf.kernel("r", max_iter=self.scf_maxiter)
         elif self.scf_type == 'UHF' or self.scf_type == 'UKS':
-            self.hf.do_scf("u", max_iter=self.scf_maxiter)
+            self.hf.kernel("u", max_iter=self.scf_maxiter)
         elif self.scf_type == 'ROHF' or self.scf_type == 'ROKS':
             raise NotImplementedError(
                 "ROHF/ROKS functionality is not yet implemented.")
         print_time_rel(module_init_time, modulename='XEDA run_SCF',
                        moduleindex=2, currprintlevel=self.printlevel, currthreshold=2)
-        return self.hf.tol_energy[0]
+        return self.hf.total_energy[0]
 
     def run_EDA(self):
         if self.printlevel >= 1:

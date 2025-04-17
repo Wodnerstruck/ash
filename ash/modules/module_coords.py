@@ -102,10 +102,10 @@ class Fragment:
         self.printlevel = printlevel
 
         if self.printlevel >= 2:
-            print_line_with_subheader1("New ASH fragment")
+            print_line_with_subheader1("New fragment")
         # Minimal ASH Fragment
         if self.printlevel > 0:
-            print("ASH Fragment creation")
+            print("Fragment creation")
         self.energy = None
         self.elems = []
         # self.coords=np.empty_like([],shape=(0,3))
