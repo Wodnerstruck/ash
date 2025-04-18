@@ -271,8 +271,8 @@ class XEDATheory:
             if self.printlevel > 1:
                 print(f"Running SCF (SCF-type: {self.scf_type})")
             self.energy = self.run_SCF()
-            if self.bc is not None:
-                self.bc.cal_energy(self.hf.d_matrix)
+            #if self.bc is not None:
+                #self.bc.cal_energy(self.hf.d_matrix)
             if self.printlevel >= 0:
                 print("Single-point XEDA energy:", self.energy)
                 if self.bc is not None:
@@ -280,7 +280,7 @@ class XEDATheory:
                 print_time_rel(module_init_time,
                                modulename='XSCF actualrun', moduleindex=2)
 
-            return self.energy + self.bc.energy[0] if self.bc is not None else self.energy
+            return self.energy + self.bc.inter_sect[0][0] if self.bc is not None else self.energy
         elif self.eda is True:
             if self.printlevel > 1:
                 print(f"Running SCF (SCF-type: {self.scf_type})")
