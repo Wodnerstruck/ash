@@ -539,7 +539,7 @@ class XEDA_EB(XEDATheory):
 
     def set_embedding_options(self, PC=False, MM_coords_l=None, MMcharges_l=None):
         if PC is True:
-            import pyxm.builder as builder
+            import wards.ham as ham
             # QM/MM pointcharge embedding
             print("PC True. Adding pointcharges")
             MMcharges_nd = [np.array(l) if isinstance(l, (list, np.ndarray)) else l for l in MMcharges_l]
@@ -547,12 +547,13 @@ class XEDA_EB(XEDATheory):
             chgs = []
             for mm_charges, mm_coords in zip(MMcharges_nd, MM_coords_nd):
                 if mm_charges is not None and mm_coords is not None:
-                    chgs.append(np.ravel(np.column_stack(
-                        (mm_charges[:, np.newaxis], mm_coords * ash.constants.ang2bohr))))
+                    chgs.append(np.column_stack(
+                        (mm_charges[:, np.newaxis], mm_coords * ash.constants.ang2bohr)))
                 else:
                     chgs.append([])
-            self.bc = builder.charge_info(self.mol, chgs)
-            self.hf.load_ham(self.bc, 1.0, 0.0)
+            #self.bc = builder.charge_info(self.mol, chgs)
+            self.bc = ham.ham_bgcharge_info(self.mol, chgs)
+            self.hf.register_ham(self.bc, 0.0, 1.0)
             #Temp
             #for i in range(3):
                 #if MMcharges_nd[i] is not None:
@@ -596,15 +597,16 @@ class XEDA_EB(XEDATheory):
                   "------------PREPARING XEDA INTERFACE-------------", BC.END)
             print("Object-label:", self.label)
             print("Run-label:", label)
-
-            import pyxm.mole as mole
-            mole.xscf_world.set_thread_num(self.numcores)
+            
+            from wards import xscf_world
+            
+            xscf_world.set_thread_num(self.numcores)
 
             if self.printlevel > 1:
                 print("Number of XEDA  threads is:", self.numcores)
 
                 # Checking if charge and mult has been provided
-        if self.eda is False and (charge is None or mult is None):
+        if self.eda is False and (charge == None or mult == None):
             print(
                 BC.FAIL, "Error. charge and mult has not been defined for XEDATheory.run method", BC.END)
             ashexit()
@@ -654,16 +656,16 @@ class XEDA_EB(XEDATheory):
             if self.printlevel > 1:
                 print(f"Running SCF (SCF-type: {self.scf_type})")
             self.energy = self.run_SCF()
-            if self.bc is not None:
-                self.bc.cal_energy(self.hf.d_matrix)
+            #if self.bc is not None:
+                #self.bc.cal_energy(self.hf.d_matrix)
             if self.printlevel >= 0:
                 print("Single-point XEDA energy:", self.energy)
                 if self.bc is not None:
-                    print("QM_charge interaction energy:", self.bc.energy[0])
+                    print("QM_charge interaction energy:", self.bc.inter_sect[0][0])
                 print_time_rel(module_init_time,
                                modulename='XEDA actualrun', moduleindex=2)
 
-            return self.energy + self.bc.energy[0] if self.bc is not None else self.energy
+            return self.energy + self.bc.inter_sect[0][0] if self.bc is not None else self.energy
         elif self.eda is True:
             if self.printlevel > 1:
                 print(f"Running SCF (SCF-type: {self.scf_type})")
@@ -1009,7 +1011,7 @@ QM/MM EDA RESULTS
                                                  )
         d_matrices = self.eda_obj.hf.d_matrix
         self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
-        qmmm_ele_l = self.eda_obj.hf.ham_list[-1].energy
-        qmmm_ele = qmmm_ele_l[1:-1].sum()
+        qmmm_ele= self.eda_obj.bc.inter_sect[1][2] + self.eda_obj.bc.inter_sect[2][1]
+        
         # TODO: deal all energy terms
         return energy_components, qmmm_ele

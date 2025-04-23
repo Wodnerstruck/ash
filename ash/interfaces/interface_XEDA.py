@@ -276,7 +276,7 @@ class XEDATheory:
             if self.printlevel >= 0:
                 print("Single-point XEDA energy:", self.energy)
                 if self.bc is not None:
-                    print("QM_charge interaction energy:", self.bc.energy[0])
+                    print("QM_charge interaction energy:", self.bc.inter_sect[0][0])
                 print_time_rel(module_init_time,
                                modulename='XSCF actualrun', moduleindex=2)
 
