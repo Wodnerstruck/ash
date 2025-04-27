@@ -552,7 +552,8 @@ class XEDA_EB(XEDATheory):
                 else:
                     chgs.append([])
             #self.bc = builder.charge_info(self.mol, chgs)
-            self.bc = ham.ham_bgcharge_info(self.mol, chgs)
+            self.bc = ham.ham_bgcharge_info(self.mol, chgs, seg_list=[list(range(self.mol.natm)), list(range(self.mol.natm_seg[0])), 
+                                                                list(range(self.mol.natm_seg[0], self.mol.natm))])
             self.hf.register_ham(self.bc, 0.0, 1.0)
             #Temp
             #for i in range(3):
@@ -860,9 +861,9 @@ QM/MM EDA RESULTS
         self.qmmm_eda_results.ex = energy_components.eda_components['EX']
         self.qmmm_eda_results.rep = energy_components.eda_components['REP']
         self.qmmm_eda_results.ec = energy_components.eda_components['EC'] + self.vdw_interaction
-        qmmm_energy_total = self.energy_sup.mm_energy + self.eda_obj.hf.tol_energy[0]
-        mono1_energy = self.energy_monomer1.mm_energy + self.eda_obj.hf.tol_energy[1]
-        mono2_energy = self.energy_monomer2.mm_energy + self.eda_obj.hf.tol_energy[2]
+        qmmm_energy_total = self.energy_sup.mm_energy + self.eda_obj.hf.total_energy[0]
+        mono1_energy = self.energy_monomer1.mm_energy + self.eda_obj.hf.total_energy[1]
+        mono2_energy = self.energy_monomer2.mm_energy + self.eda_obj.hf.total_energy[2]
         self.qmmm_eda_results.tot = qmmm_energy_total - mono1_energy - mono2_energy
         self.qmmm_eda_results.pol = self.qmmm_eda_results.tot - self.qmmm_eda_results.ele - \
             self.qmmm_eda_results.ex - self.qmmm_eda_results.rep - self.qmmm_eda_results.ec
@@ -1009,9 +1010,10 @@ QM/MM EDA RESULTS
         energy_components = Energy_decomposition(fragment=eda_fragment, theory=self.eda_obj, dmeda_eb=True,  # crucial parameter
                                                  MM_charges=mm_charges_list, MM_coords=mm_coords_list
                                                  )
-        d_matrices = self.eda_obj.hf.d_matrix
-        self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
+        #d_matrices = self.eda_obj.hf.d_matrix
+        #self.eda_obj.bc.cal_energy([d_matrices[0], d_matrices[2], d_matrices[1]])
         qmmm_ele= self.eda_obj.bc.inter_sect[1][2] + self.eda_obj.bc.inter_sect[2][1]
+        print(f"QMMM ELE: {qmmm_ele}\n")
         
         # TODO: deal all energy terms
         return energy_components, qmmm_ele
