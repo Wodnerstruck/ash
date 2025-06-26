@@ -68,6 +68,7 @@ class xTBTheory_simple:
     
     def run(self, current_coords=None, current_MM_coords=None, MMcharges=None, qm_elems=None, mm_elems=None, printlevel=None,
                 elems=None, Grad=False, PC=False, numcores=None, label=None, charge=None, mult=None):
+        module_init_time=time.time()
         if MMcharges is None:
             MMcharges=[]
 
@@ -134,8 +135,7 @@ def create_xtb_pcfile_general(coords, pchargelist,hardness=99,elems=None):
     with open('pccharge','w') as pcfile:
         pcfile.write(str(len(pchargelist)) + '\n')
         for p, c in zip(pchargelist,coords):
-            line = "{} {} {} {}".format(p, c[0], c[1], c[2], hardness)#待修改
-    raise NotImplementedError("pcfile not implemented for xTBTheory_simple")    
+            line = "{} {} {} {}".format(p, c[0], c[1], c[2], hardness)#待修改  
     
 def run_xtb_SP_serial(xtbdir, xtbmethod, xyzfile, charge, mult, Grad=False, Opt=False, Hessian=False, maxiter=500, electronic_temp=300, accuracy=0.1, solvent=None, printlevel=2, numcores=1):
     
@@ -163,15 +163,51 @@ def run_xtb_SP_serial(xtbdir, xtbmethod, xyzfile, charge, mult, Grad=False, Opt=
     command_list=[xtbdir + '/xtb', basename + '.xyz', str(solvent_line), '--gfn', str(xtbflag), '--chrg', str(charge), '--uhf', str(uhf), '--iterations', str(maxiter),
                       '--etemp', str(electronic_temp),  '--acc', str(accuracy), '--parallel', str(numcores), '--input', 'xtbinput']
     if printlevel >= 1:
-        print("Running xtb with these arguments:", command_list)
-    raise NotImplementedError("run_xtb_SP_serial not implemented for xTBTheory_simple")  
-
+        print("The running command:", command_list) 
+    try:
+        with open(basename+'.out', 'w') as ofile:
+            process = sp.run(command_list, check=True, stdout=ofile, stderr=ofile, universal_newlines=True)
+            if process.returncode == 0:
+                print_if_level(f"xTB job succeeded.",printlevel,2)
+                return
+    except sp.CalledProcessError:
+        print("xTB subprocess gave error.")
+        if Hessian == True:
+            if os.path.exists("hessian"):
+                print("Hessian file was still created, ignoring error and continuing.")
+                return
+            else:
+                print("Hessian file was not created. Check xtb output for error")
+                ashexit()
+        else:
+            #Some other error. Restarting without xtbrestart (in case a bad one) and trying again.
+            print("Something went wrong with xTB. ")
+            #TODO: Check for SCF convergence?
+            print("Removing xtbrestart MO-file and trying to run again")
+            try:
+                os.remove("xtbrestart")
+            except FileNotFoundError:
+                print("Nof xtbrestart file present")
+            shutil.copyfile(basename+'.out', basename+'_firstrun.out')
+            try:
+                with open(basename+'.out', 'w') as ofile:
+                    process = sp.run(command_list, check=True, stdout=ofile, stderr=ofile, universal_newlines=True)
+                if process.returncode == 0:
+                    return
+            except:
+                print("Still an xtb problem. Exiting. Check xtb outputfile")
+                ashexit()
+    else:
+        print("some other error")
+        print("process:", process)
+        print("process returncode", process.returncode)
+        ashexit()
 def xtbfinalenergygrab(file):
     energy=None
     with open(file) as f:
         for line in f:
             if 'TOTAL ENERGY' in line:
-                Energy=float(line.split()[-3])
+                energy=float(line.split()[-3])
     return energy
     
 

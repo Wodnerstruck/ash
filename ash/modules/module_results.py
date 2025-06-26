@@ -80,9 +80,9 @@ class ASH_Results:
         for k,v in self.__dict__.items():
             if v is not None:
                 print(f"{k}: {v}")
-    def write_to_disk(self,filename="ASH.result"):
+    def write_to_disk(self,filename="Result"):
         import json
-        print("\nWriting to disk defined attributes of ASH_Results dataclass")
+        #print("\nWriting to disk defined attributes of ASH_Results dataclass")
         f = open(filename,'w')
 
         newdict={}

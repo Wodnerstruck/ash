@@ -10,7 +10,7 @@ from ash.functions.functions_general import BC, ashexit, print_time_rel,print_li
 from ash.modules.module_theory import Theory
 from ash.interfaces.interface_ORCA import grabatomcharges_ORCA
 from ash.interfaces.interface_xtb import grabatomcharges_xTB,grabatomcharges_xTB_output
-from ash.modules.module_QMMM import linkatom_force_adv, linkatom_force_lever,linkatom_force_chainrule
+#from ash.modules.module_QMMM import linkatom_force_adv, linkatom_force_lever,linkatom_force_chainrule
 
 
 #TODO: deal with GBW file and ORCA autostart mismatching for different regions and theory-levels
